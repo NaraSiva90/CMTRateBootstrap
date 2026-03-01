@@ -49,10 +49,55 @@ python scripts/update_treasury_cmt.py
 
 Updates `Treasury_CMT_Data_Tool.xlsx` with latest rates from Treasury API.
 
+## 📊 Interactive Visualization
+
+Explore bootstrapped yield curves with mathematically correct reconstruction:
+```bash
+# Run with sample data (2022-2026 included)
+python -m streamlit run scripts/yield_curve_app.py
+```
+
+### Why Curve Reconstruction Matters
+
+Most yield curve tools use **linear interpolation** between tenor points - this is mathematically incorrect!
+
+Our approach **reconstructs continuous curves** from bootstrap parameters:
+- **S1:** Piecewise constant forwards → Exponential discount decay  
+- **S2:** Piecewise linear forwards → Smooth exponential decay  
+- **S3:** Monotone cubic forwards → Perfectly smooth curves
+
+### Features
+
+**Tab 1: Yield Curves**
+- Par, spot, and forward rates (smooth reconstruction)
+- Discount factor curves (exponential decay)
+- Spot-par spread analysis
+- Data table with CSV export (expandable)
+
+**Tab 2: Spread Analysis**
+- Compare any two tenors (e.g., 10Y-2Y inversion)
+- Date range filtering
+- Distribution histograms with statistics
+
+**Tab 3: Forward Projections**
+- Forward term structure: f(0, s, s+M)
+- Multiple tenors (1Mo to 30Yr)
+- Shows market rate expectations
+- Progressive smoothing demonstration
+
+![S3 Smooth Curves](docs/images/yield_curves_s3.png)
+*Scheme 3 shows perfectly smooth forward rates - true cubic interpolation, not linear approximation*
+
+![Forward Term Structure](docs/images/forward_projections.png)
+*Progressive smoothing: 1Mo forward is jagged, 10Yr forward is smooth - mathematics visualized*
+
+See [Visualization Guide](docs/VISUALIZATION_GUIDE.md) for complete documentation.
+
+
 ## Project Structure
 
 ```
-cmt-curve-tool/
+cmt-yield-curve-bootstrap/
 ├── README.md                          # This file
 ├── LICENSE
 ├── requirements.txt                   # Python dependencies
@@ -78,6 +123,49 @@ cmt-curve-tool/
 └── docs/
     ├── USER_GUIDE.md                 # Detailed usage guide
     └── BOOTSTRAP_GUIDE.md            # Bootstrap methodology
+```
+
+V1.1 Directory Structure:
+```
+cmt-yield-curve-bootstrap/
+├── README.md                        ← UPDATE
+├── LICENSE
+├── requirements.txt                 ← UPDATED
+├── .gitignore                      ← UPDATE
+├── RELEASE_NOTES.md                ← NEW
+│
+├── src/
+│   └── cmt_bootstrap.py
+│
+├── scripts/
+│   ├── yield_curve_app.py          ← NEW
+│   ├── curve_reconstruction.py     ← NEW
+│   ├── build_initial_treasury_file.py
+│   ├── update_treasury_cmt.py
+│   ├── update_short_rates.py
+│   └── run_bootstrap.py
+│
+├── data/
+│   ├── samples/                    ← NEW
+│   │   ├── README.md               ← NEW
+│   │   ├── Treasury_CMT_curves_S1_2022_2026.npz  ← NEW
+│   │   ├── Treasury_CMT_curves_S2_2022_2026.npz  ← NEW
+│   │   └── Treasury_CMT_curves_S3_2022_2026.npz  ← NEW
+│   └── short_rates/
+│       ├── fed_funds_1954_2018.csv
+│       └── sofr_manual.csv
+│
+└── docs/
+    ├── USER_GUIDE.md
+    ├── BOOTSTRAP_GUIDE.md
+    ├── VISUALIZATION_GUIDE.md      ← NEW
+    ├── CURVE_RECONSTRUCTION.md     ← NEW
+    ├── INSTALLATION_GUIDE.md       ← NEW
+    └── images/                     ← NEW
+        ├── yield_curves_s1.png
+        ├── yield_curves_s3.png
+        ├── spread_analysis.png
+        └── forward_projections.png
 ```
 
 ## Bootstrap Schemes
