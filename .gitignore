@@ -34,3 +34,9 @@ Thumbs.db
 
 # Logs
 *.log
+
+# User-generated NPZ files
+*.npz
+
+# EXCEPT samples
+!data/samples/*.npz
