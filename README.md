@@ -74,6 +74,9 @@ Our approach **reconstructs continuous curves** from bootstrap parameters:
 - Spot-par spread analysis
 - Data table with CSV export (expandable)
 
+![S3 Smooth Curves](docs/images/yield_curves_s3.png)
+*Scheme 3 shows perfectly smooth forward rates - true cubic interpolation, not linear approximation*
+
 **Tab 2: Spread Analysis**
 - Compare any two tenors (e.g., 10Y-2Y inversion)
 - Date range filtering
@@ -84,9 +87,6 @@ Our approach **reconstructs continuous curves** from bootstrap parameters:
 - Multiple tenors (1Mo to 30Yr)
 - Shows market rate expectations
 - Progressive smoothing demonstration
-
-![S3 Smooth Curves](docs/images/yield_curves_s3.png)
-*Scheme 3 shows perfectly smooth forward rates - true cubic interpolation, not linear approximation*
 
 ![Forward Term Structure](docs/images/forward_projections.png)
 *Progressive smoothing: 1Mo forward is jagged, 10Yr forward is smooth - mathematics visualized*
