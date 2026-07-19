@@ -1,7 +1,9 @@
 # Bootstrap Pipeline — User Guide
 ## Treasury Yield Curve Construction from CMT Par Rates
 
-**Version 2.1 — February 2026**
+This guide documents the actual implementation in [`src/cmt_bootstrap.py`](../src/cmt_bootstrap.py).
+Every function signature, dataclass, and CLI flag below matches that file directly —
+if you edit `cmt_bootstrap.py`, please update this guide alongside it.
 
 ---
 
@@ -9,60 +11,61 @@
 
 1. [Overview](#1-overview)
 2. [Mathematical Background](#2-mathematical-background)
-3. [The Bootstrap Methods](#3-the-bootstrap-methods)
-   - 3.1 Bootstrap 1 — Piecewise Constant Forwards
-   - 3.2 Bootstrap 2 — Piecewise Linear Forwards
-   - 3.3 Bootstrap 3 — Monotone Cubic Forwards
-4. [Longstaff's Hack](#4-longstaffs-hack)
-5. [The Uniform Grid Pipeline](#5-the-uniform-grid-pipeline)
-6. [Quick Start](#6-quick-start)
-7. [Bootstrap Workflows — From Data to Analysis](#7-bootstrap-workflows--from-data-to-analysis)
-   - 7.1 Ad-Hoc Analysis Workflow
-   - 7.2 Production Workflow (Automated Daily)
-   - 7.3 Research Workflow (Historical Panel)
-8. [Examples — Recent Quarter-End Data](#8-examples--recent-quarter-end-data)
-9. [Choosing a Method](#9-choosing-a-method)
-10. [API Reference](#10-api-reference)
-11. [Design Notes & Implementation Lessons](#11-design-notes--implementation-lessons)
-12. [Downstream Applications](#12-downstream-applications)
-13. [References](#13-references)
+3. [The Bootstrap Schemes](#3-the-bootstrap-schemes)
+   - 3.1 Scheme 1 — Piecewise Constant Forwards
+   - 3.2 Scheme 2 — Piecewise Linear Forwards
+   - 3.3 Scheme 3 — Monotone Cubic Forwards
+4. [How the Historical Panel Is Built](#4-how-the-historical-panel-is-built)
+5. [Quick Start](#5-quick-start)
+6. [Bootstrap Workflows — From Data to Analysis](#6-bootstrap-workflows--from-data-to-analysis)
+7. [Choosing a Method](#7-choosing-a-method)
+8. [API Reference](#8-api-reference)
+9. [Design Notes & Implementation Lessons](#9-design-notes--implementation-lessons)
+10. [Downstream Applications](#10-downstream-applications)
+11. [References](#11-references)
 
 ---
 
 ## 1. Overview
 
-This module constructs zero-coupon yield curves from US Treasury Constant Maturity
-(CMT) par rates using a family of bootstrapping methods of increasing smoothness,
-followed by Longstaff's Hack and a uniform-grid pipeline for functional analysis.
+`src/cmt_bootstrap.py` constructs zero-coupon yield curves from US Treasury Constant
+Maturity (CMT) par rates using one of three bootstrapping schemes of increasing
+forward-curve smoothness. It reads an entire historical workbook in a single run and
+writes one NPZ panel (optionally also an Excel workbook) covering every date at once.
 
-**Input:**  14 CMT par rates {S(T_i)} at standard Treasury maturities 1Mo–30Yr
-             (including the 1.5Mo / 45-day tenor).
+**Input:** a `CMT Rates` sheet with up to 14 CMT par rates per date, at standard
+Treasury maturities 1Mo–30Yr (including the 1.5Mo / 45-day tenor).
 
-**Output:**  Discount factors P(0,T), spot rates R(T), instantaneous forward
-             rates f(t), and a 360-element uniformly-spaced forward rate vector
-             ready for PCA and other functional analysis.
+**Output:** an NPZ panel with, for every date: discount factors P(0,T), continuously-
+compounded spot rates R(T), instantaneous forward rates at each tenor endpoint,
+implied par rates (round-trip check), and the scheme-specific curve parameters
+needed to reconstruct the continuous forward function between tenors
+(see [`scripts/curve_reconstruction.py`](../scripts/curve_reconstruction.py)).
 
-### The Five Stages
+### The Three Schemes
 
-| Stage | Method | Tenors | Forward Smoothness | Primary Use |
-|-------|--------|--------|--------------------|-------------|
-| 1 | Bootstrap 1 | 14 CMT | C⁻¹ (jumps at knots) | Swap pricing, DV01, hedging |
-| 2 | Bootstrap 2 | 14 CMT | C⁰ (continuous) | Hull-White calibration |
-| 3 | Bootstrap 3 | 14 CMT | C¹ (smooth) | Monte Carlo, exotics |
-| 4 | Longstaff    | 13 CMT† | N/A (par rates) | Par rate interpolation |
-| 5 | B1 on 1M grid | 360 uniform | C⁻¹ → C⁰ as Δτ→0 | PCA, functional analysis |
-
-† Longstaff excludes 1.5Mo (not a whole-month tenor on 30/360; spline
-  interpolates smoothly over the 1Mo–2Mo gap).
+| Scheme | Function | Tenors | Forward Smoothness | Primary Use |
+|--------|----------|--------|---------------------|-------------|
+| 1 | `bootstrap_scheme1` | up to 14 CMT | C⁻¹ (jumps at knots) | Swap pricing, DV01, hedging |
+| 2 | `bootstrap_scheme2` | up to 14 CMT | C⁰ (continuous) | Smoother visualization, SOFR-anchored |
+| 3 | `bootstrap_scheme3` | up to 14 CMT | C¹ (smooth) | Monte Carlo, exotics, PCA input |
 
 ### Conventions
 
-- **Day count:** 30/360 throughout. T = months/12 exactly (no rounding error).
-- **Payment frequency:** ν = 24 (every 15 days = 1/24 year).
-- **CMT tenors:** 14 for bootstrapping (stages 1–3), 13 for Longstaff (1.5Mo excluded — not a whole-month tenor on 30/360).
-- **Compounding:** Continuous throughout. R(T) = −ln P(0,T) / T.
-- **Par bond condition:** S(T_i) = (1 − P(0,T_i)) / Ann₀(0,T_i).
-- **Round-trip precision:** < 10⁻⁸ bps for all bootstrap stages.
+- **Day count:** 30/360 throughout. `T = months/12` exactly, via `parse_tenor_to_years()`
+  (no rounding error).
+- **Payment frequency:** `nu = 24` by default (every 15 days = 1/24 year), settable
+  with `--nu`.
+- **CMT tenors:** up to 14 — `1Mo 1.5Mo 2Mo 3Mo 4Mo 6Mo 1Yr 2Yr 3Yr 5Yr 7Yr 10Yr 20Yr 30Yr`.
+  Missing tenors on a given date are skipped entirely (no interpolation) —
+  see `used_mask` / `tenor_used_mask`.
+- **Compounding:** Continuous. `R(T) = -ln P(0,T) / T`.
+- **Par bond condition:** `S(T_i) = (1 - P(0,T_i)) / Ann(0,T_i)`, where the annuity
+  sums discount factors at every payment date up to `T_i` at frequency `nu`
+  (see `annuity_sum()`).
+- **Round-trip precision:** implied par rates are recomputed from the fitted
+  discount curve and compared to the input; errors are stored in basis points
+  (`par_rate_err_bp`, `par_rate_err_maxabs_bp`, `par_rate_err_rms_bp`).
 
 ---
 
@@ -70,938 +73,338 @@ followed by Longstaff's Hack and a uniform-grid pipeline for functional analysis
 
 ### The Bootstrapping Problem
 
-Given par rates {S(T_1), ..., S(T_N)}, find discount factors {P(0,T_i)} such
+Given par rates `{S(T_1), ..., S(T_N)}`, find discount factors `{P(0,T_i)}` such
 that a par bond at each tenor prices at 100:
 
-    S(T_i) = (1 − P(0,T_i)) / Ann₀(0,T_i)
+    S(T_i) = (1 - P(0,T_i)) / Ann(0,T_i)
 
-where the annuity factor Ann₀(0,T_i) accumulates coupon present values:
+where the annuity factor accumulates coupon present values at payment frequency `nu`:
 
-    Ann₀(0,T_i) = Ann₀(0,T_{i-1}) + (P(0,T_{i-1})/ν) Σ_{k=1}^{n_i} exp(−∫₀^{k/ν} f_i(τ)dτ)
+    Ann(0,T_i) = (1/nu) * Σ_{k=1}^{m_i} P(0, k/nu),   m_i = pay_count(T_i, nu)
 
-and f_i(τ) is the forward rate function in interval i.
+This is exactly `annuity_sum()` in the code, and `par_rate()` evaluates the par-bond
+condition given any callable `discount_fn(t)`.
 
 ### Why Not Direct Inversion?
 
-The par bond equation involves a **nonlinear transcendental function** of the
-forward rate polynomial coefficients — there is no closed-form inversion.
-Bootstrapping solves these equations sequentially, interval by interval, using
-the already-determined discount factors for shorter maturities.
+The par bond equation is a nonlinear function of the forward-rate parameters for
+each interval — there's no closed form. Each scheme solves interval-by-interval,
+using the already-determined discount factors from shorter maturities, with
+`scipy.optimize.brentq` doing the 1D root-find per interval (`shat(fi) - Si == 0`,
+or the cubic-reduced equivalent for Scheme 3).
 
-Each interval has one (B1, B2) or two (B3) unknowns, solved by Brent's method
-(1D) or a reduced 1D system after analytical substitution (B3). The key
-implementation insight is that floating-point precision requires `round()` before
-`int()` when computing payment counts:
+The key implementation detail is `pay_count()`:
 
-    n_i = int(round(ν · τ_i))    # CORRECT
-    n_i = int(ν · τ_i)           # WRONG: int(0.9999...) = 0
+```python
+def pay_count(t_years: float, nu: int) -> int:
+    return int(round(nu * float(t_years) + 1e-9))
+```
+
+Floating-point safety requires `round()` before `int()` — see
+[§9.1](#91-the-payment-count-fix--and-why-nu--24) for why, and why the small
+`+1e-9` epsilon is there.
 
 ### CMT Tenors and Spacing
 
-The 14 CMT tenors used in bootstrapping (stages 1–3) span 1 month to 30 years:
+The tenor grid is parsed by `parse_tenor_to_years()` from labels like `"1.5 Mo"`,
+`"10 Yr"`, etc. (see `read_cmt_rates_from_workbook()`). The full set spans 1 month
+to 30 years:
 
     1Mo  1.5Mo  2Mo  3Mo  4Mo  6Mo  1Yr  2Yr  3Yr  5Yr  7Yr  10Yr  20Yr  30Yr
 
-The 1.5Mo tenor (45-day T-bill) is the motivation for choosing ν = 24.
-With ν = 12, the 1.5Mo interval (τ = 0.5/12) gives ν·τ = 0.5 — not an
-integer, creating an ambiguous payment count. ν = 24 gives ν·τ = 1 exactly
-for every interval in the 14-tenor set. Longstaff operates on 13 tenors
-(1.5Mo excluded) since it works in whole-month par rate space.
+Missing tenors on any given date are simply skipped — the bootstrap advances
+`T_prev` to the next *present* tenor rather than interpolating a value, so `dT`
+(the interval width fed to the solver) can be wider than the nominal spacing
+when a tenor is absent that day.
 
 ---
 
-## 3. The Bootstrap Methods
+## 3. The Bootstrap Schemes
 
-### 3.1 Bootstrap 1 — Piecewise Constant Forwards
+### 3.1 Scheme 1 — Piecewise Constant Forwards
 
-**Forward curve:** f_i(τ) = f_i (constant) for τ ∈ [0, τ_i)
+`bootstrap_scheme1(S, T, nu, f_max=1.0, tol=1e-14) -> Scheme1Result`
+
+**Forward curve:** `f(τ) = f_i` (constant) for `τ` in the interval ending at `T_i`.
 
 **Discount factor:**
 
-    P(0,T_i) = P(0,T_{i-1}) · exp(−f_i · τ_i)
+    P(0,T_i) = P(0,T_{i-1}) · exp(-f_i · dT_i),   dT_i = T_i - T_prev
 
 **Continuity:** C⁻¹ — forwards are **discontinuous** at each tenor knot.
 
-**Solver:** 1D Brent per interval on the par bond residual.
+**Solver:** `brentq` per interval on `shat(f_i) - S_i`, with the code trying
+progressively wider brackets (`±f_max`, then `±f_max·{2,5,10,20}`) if the initial
+bracket doesn't contain a sign change. If no bracket is found, that date/tenor is
+left `NaN` and a message is appended to `warns`.
 
-**Properties:**
-- Arbitrage-free by construction
-- Exact at all tenor knot points
-- Forward curve exhibits jumps (up to ~50 bps at illiquid tenors)
-- Industry standard: matches Bloomberg SWDF methodology
-- Computationally simplest — 1 parameter, 1 equation per interval
+**Returned fields (`Scheme1Result`):** `f`, `P`, `z` (spot, cc), `f_end` (== `f`,
+kept for symmetry with Schemes 2/3), `used_mask`, `warns`, and `discount_fn` — a
+closure that evaluates `P(t)` for arbitrary `t`, used for the round-trip par-rate
+check.
 
-**When to use:** Swap pricing, DV01 calculation, hedge ratios, any application
-requiring exact pricing of instruments at the quoted CMT tenors. The discontinuous
-forwards are not a problem when only the integrated discount factors matter.
-
-**Not suitable for:** Applications requiring a continuous forward curve —
-Hull-White calibration (where θ(t) is derived from f'(t)), Monte Carlo
-path generation, or barrier/path-dependent products.
+**When to use:** Swap pricing, DV01, hedge ratios — anything needing exact pricing
+at the quoted CMT tenors, where the discontinuous forward doesn't matter because
+only the integrated discount factor is used.
 
 ---
 
-### 3.2 Bootstrap 2 — Piecewise Linear Forwards
+### 3.2 Scheme 2 — Piecewise Linear Forwards
 
-**Forward curve:** f_i(τ) = a_i·τ + b_i for τ ∈ [0, τ_i)
+`bootstrap_scheme2(S, T, r0, nu, a_max=50.0, tol=1e-14) -> Scheme2Result`
 
-**C⁰ continuity condition:** b_i = a_{i-1}·τ_{i-1} + b_{i-1}
+**Forward curve:** `f(τ) = a_i·τ + b_i` for local `τ` in `[0, dT_i)` within
+interval `i` (τ measured from the start of that interval, i.e. `T_prev`).
 
-**Initial condition:** b_1 = r_0 (SOFR overnight rate)
+**C⁰ continuity:** `b_i` is set to the previous interval's forward value at its own
+endpoint: `bi = f_prev_end`, where `f_prev_end` is updated each iteration as
+`a_i·dT_i + b_i`. The very first interval uses `b_1 = r0` (the short-rate anchor).
 
 **Discount factor:**
 
-    P(0,T_i) = P(0,T_{i-1}) · exp(−a_i·τ_i²/2 − b_i·τ_i)
+    P(0,T_i) = P(0,T_{i-1}) · exp(-(½·a_i·dT_i² + b_i·dT_i))
 
-**Continuity:** C⁰ — forwards are **continuous** at tenor knots; spots are C¹.
+via `int_lin(a, b, t) = 0.5*a*t*t + b*t`.
 
-**Solver:** 1D Brent on the slope a_i (intercept b_i determined by continuity).
+**Solver:** `brentq` on the slope `a_i` only (the intercept `b_i` is fixed by
+continuity before the solve). Bracket search tries `±a_max` first, then a list of
+scaled brackets — the code specifically tries *narrower* brackets before wider
+ones (`scales_to_try = [0.001, 0.01, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0]`),
+because wide CMT intervals (e.g. 10Yr→20Yr, or a gap left by a missing tenor) need
+small slopes and a too-wide initial bracket can fail to bisect cleanly.
 
-**Properties:**
-- Arbitrage-free by construction
-- Forward curve continuous (no jumps)
-- Anchored to SOFR at the short end via b_1 = r_0
-- Slightly higher computational cost than B1 (~20%)
+**Returned fields (`Scheme2Result`):** `a`, `b`, `P`, `z`, `f_end` (forward value at
+the interval's own endpoint — the value the *next* interval's `b` will inherit),
+`used_mask`, `warns`, `discount_fn`.
 
-**C⁰ continuity mechanics:** Each interval's intercept b_i is fully determined
-by the previous interval's terminal slope a_{i-1}·τ_{i-1} + b_{i-1}. This
-chains all intervals together, which is appropriate for a sparse 14-tenor grid
-but becomes pathological on dense uniform grids (see Section 5).
-
-**When to use:** Hull-White calibration (continuous θ(t) = f'(t) + f(t)²  + f(t)·κ
-benefits from continuous forwards), smoother forward curve visualization, or when
-the slope anchoring to SOFR matters economically.
-
-**Important limitation — Dense Grids:** Do NOT apply Bootstrap 2 to the 360-tenor
-uniform grid. The slope chaining across 360 intervals creates resonant oscillation:
-each a_i compensates the f_end of the previous interval, which overshoots, requiring
-correction in turn. The amplitude grows along the curve, producing a sawtooth forward
-pattern with excursions of ±70%. Bootstrap 1 on the uniform grid avoids this entirely.
+**When to use:** Continuous forwards without the cost of Scheme 3 — smoother
+visualization, or anywhere anchoring the short end to the SOFR-based `r0` matters.
+Also used internally by Scheme 3 to obtain the linear slopes needed for the
+Fritsch-Carlson monotonicity condition (see below).
 
 ---
 
-### 3.3 Bootstrap 3 — Monotone Cubic Forwards
+### 3.3 Scheme 3 — Monotone Cubic Forwards
 
-**Forward curve:** f_i(τ) = a_i·τ³ + b_i·τ² + c_i·τ + d_i for τ ∈ [0, τ_i)
+`bootstrap_scheme3(S, T, r0, nu, a_max=200.0, tol=1e-13) -> Scheme3Result`
 
-**Four constraints per interval (matching four parameters):**
+**Forward curve:** `f(τ) = a_i·τ³ + b_i·τ² + c_i·τ + d_i` for local `τ` in
+`[0, dT_i)`.
 
-1. **C⁰:** d_i = f_{i-1}(τ_{i-1}),  d_1 = r_0
-2. **C¹:** c_i = f'_{i-1}(τ_{i-1}), c_1 = 0
-3. **Monotonicity:** c_{i+1} fixed by Fritsch-Carlson condition
-4. **Par bond:** (1 − P)/Ann = S(T_i) (determines the integral)
+**Two-pass algorithm, matching the code exactly:**
 
-**Continuity:** C¹ forwards, C² spots. The forward curve has both value and
-slope continuity at every tenor knot.
+1. **Pass 1:** Run `bootstrap_scheme2(S, T, r0, nu)` to get linear slopes `s2.a`
+   for every used tenor — these feed the monotonicity condition below.
+2. **Pass 2a — Fritsch-Carlson targets:** For consecutive used-tenor slopes
+   `l_j, l_{j+1}` (falling back to 0 for any `NaN` slope from a Scheme 2 failure):
 
-**The Fritsch-Carlson Condition (monotonicity):**
+       c_target[j+1] = (l_j·tau_j + l_{j+1}·tau_{j+1}) / (tau_j + tau_{j+1})   if l_j·l_{j+1} > 0
+       c_target[j+1] = 0                                                      otherwise
 
-Using Bootstrap 2 slopes {l_i} as the linear reference, define phantom
-values l_0 = l_{N+1} = 0. Then:
+   with `c_target[0] = 0` and `c_target[m] = 0` as the natural boundary conditions
+   (flat forward at t=0 and at the last tenor).
+3. **Pass 2b — solve for `(a_i, b_i)` per interval:** `c_i` and `d_i` are already
+   fixed by continuity from the previous interval (`d_1 = r0`, `c_1 = 0`). The slope
+   target `c_next` is known from Pass 2a, so `b_i` can be written in closed form as
+   a function of `a_i`:
 
-    c_{i+1} = { (l_i·τ_i + l_{i+1}·τ_{i+1}) / (τ_i + τ_{i+1})  if l_i·l_{i+1} > 0
-              { 0                                                   otherwise
+       b(a) = (c_next - c_i - 3·a·dT²) / (2·dT)
 
-The phantom values give boundary conditions for free:
-- Left end: l_0·l_1 = 0 → c_1 = 0 (forward curve flat at instantaneous maturity)
-- Right end: l_N·0 = 0 → c_{N+1} = 0 (forward curve flat at 30Y)
+   which makes the par-bond residual **linear in `a`** after substitution — reducing
+   what would be a fragile 2D nonlinear solve to a single well-conditioned 1D
+   `brentq` call. See [§9.3](#93-scheme-3--dimension-reduction) for why this matters.
 
-**Two-pass algorithm:**
-- Pass 1: Run Bootstrap 2 to obtain slopes {l_i}
-- Pass 2a: Compute {c_i} from Fritsch-Carlson condition
-- Pass 2b: For each interval, solve for {a_i, b_i}
+**Numerical fallbacks in the real code** (not present in Schemes 1/2):
+- If the Brent bracket doesn't contain a root, the code tries progressively
+  scaled brackets (same `scales_to_try` list as Scheme 2), then asymmetric
+  bracket adjustment if only one side overflows.
+- If cubic solving still fails for that tenor, it **falls back to a constant
+  forward** for that interval only (binary-searched via a separate `brentq` on a
+  constant `d_i`), logging a warning — this keeps the curve continuous even when
+  the cubic is numerically unsound (typically only in pathological/very wide
+  intervals from missing tenors).
 
-**Solver — Dimension Reduction Trick:**
+**Continuity:** C¹ forwards (value and slope continuous at every knot), C² spots.
 
-The slope constraint F2: `3a·τ² + 2b·τ + c_i − c_{i+1} = 0` is **linear** in
-(a, b), allowing b to be expressed analytically as a function of a:
+**Returned fields (`Scheme3Result`):** `a3`, `b3`, `c3`, `d3`, `c_target_next`,
+`P`, `z`, `f_end`, `used_mask`, `warns`, `discount_fn`.
 
-    b(a) = [c_{i+1} − c_i − 3a·τ²] / (2τ)
+**Why no C²:** A fifth constraint on a four-parameter cubic would over-determine
+the system. The only resolution is to drop monotonicity, which produces
+Runge-phenomenon oscillation — especially across the 10Y→20Y gap. Monotonicity is
+the deliberate substitute for C² (see [§9.4](#94-c-is-impossible-without-sacrificing-monotonicity)).
 
-After substitution, f_i(τ) (the right endpoint value) simplifies to:
-
-    f_i(τ) = −(τ³/2)·a + [(c_{i+1}+c_i)/2]·τ + d_i
-
-which is **linear in a**, providing exact analytical bounds for Brent's method.
-This reduces the 2D nonlinear system to a robust 1D Brent search.
-
-**Why No C²?**
-
-Adding second-derivative continuity would require a fifth constraint on a
-four-parameter system — the system becomes over-determined. The only resolution
-is to drop monotonicity, which causes catastrophic Runge-phenomenon oscillation
-especially across the 10Y→20Y gap (τ = 10 years). Monotonicity is the correct
-substitute: it prevents spurious oscillations while maintaining C¹ smoothness.
-
-**When to use:** Hull-White calibration requiring fully smooth θ(t), Monte Carlo
-path generation, path-dependent or barrier products, research requiring the
-smoothest possible forward curve, any application requiring C² spot rates.
-
-**Computational cost:** ~3× Bootstrap 1. The two-pass algorithm and 1D solver
-(after dimension reduction) add overhead; the dimension reduction is essential
-for robustness especially at the 10Y→20Y interval.
+**When to use:** Monte Carlo path generation, path-dependent/barrier products,
+research requiring the smoothest forward curve, or as PCA input (see
+[§10](#10-downstream-applications)).
 
 ---
 
-## 4. Longstaff's Hack
+## 4. How the Historical Panel Is Built
 
-### Concept
+There is no separate "batch" or "panel" API — `cmt_bootstrap.py`'s `main()` *is*
+the panel builder. A single CLI invocation:
 
-Rather than bootstrapping to find a forward curve and then interpolating
-spot/par rates, Longstaff's Hack fits a monotone cubic spline **directly
-to the par rates** as a function of maturity:
+1. Reads every date row from the workbook's `CMT Rates` sheet
+   (`read_cmt_rates_from_workbook`).
+2. Builds the short-rate anchor `r0` for every date (`build_r0_series`), preferring
+   `data/short_rates/short_rate_combined.csv` and falling back to separate
+   Fed Funds / SOFR histories if that file is missing.
+3. Loops over all `N` dates, running the chosen scheme's bootstrap function for
+   each one, and stacking the per-date results into `(N, 14)` arrays.
+4. Computes the round-trip par-rate check for every date/tenor pair that had
+   input data.
+5. Writes one NPZ (`save_panel_npz`) — and optionally one Excel workbook
+   (`write_excel`) — covering the entire history in a single file.
 
-    y_i(τ) = a_i·τ³ + b_i·τ² + c_i·τ + d_i  interpolates S(T) for T ∈ [T_i, T_{i+1}]
-
-This inverts the usual workflow. Instead of:
-
-    Par rates → Bootstrap → Spot/Zero rates → Interpolate
-
-the approach is:
-
-    Par rates → Spline → S(T) for any T → Bootstrap on fine grid
-
-### Mathematics
-
-**C⁰ continuity:** d_{i+1} = y_i(τ_i)  (value continuity at knots)
-
-**C¹ continuity:** c_{i+1} = y'_i(τ_i)  (slope continuity at knots)
-
-**Monotonicity (Fritsch-Carlson on par rates directly):**
-
-    c_i = { [S(T_{i+1}) − S(T_{i-1})] / [T_{i+1} − T_{i-1}]
-             if locally monotone: S(T_{i+1}) > S(T_i) > S(T_{i-1}) or reverse
-           { 0  at local extrema and at boundaries
-
-This is the **centered finite difference slope**, applied only where the par
-curve is locally monotone. Note that this is applied to the directly-observable
-par rates — not to derived forward or zero rates.
-
-**Closed-form {a_i, b_i}:**
-
-The two continuity conditions at the right endpoint of interval i give a
-2×2 linear system:
-
-    [τ_i³   τ_i²] [a_i]   [d_{i+1} − d_i − c_i·τ_i]
-    [3τ_i²  2τ_i] [b_i] = [c_{i+1} − c_i           ]
-
-    det = 2τ_i⁴ − 3τ_i⁴ = −τ_i⁴  (always nonzero → always invertible)
-
-Solved by np.linalg.solve — exact, O(1), no iterative method required.
-This is the key computational advantage: the entire spline is O(N) arithmetic.
-
-### Stability Hierarchy
-
-Longstaff's observation motivating this approach:
-
-    Stability:  Mortgage rates > Par rates > Zero rates > Forward rates
-
-Each transformation from par rates amplifies interpolation noise:
-- Par → Zero requires stripping, propagating short-end errors to long maturities
-- Zero → Forward requires differentiation, the most noise-amplifying operation
-
-By fitting directly in par rate space — the most directly observable and most
-empirically smooth coordinate — the interpolation is maximally stable.
-
-### Arbitrage Properties
-
-**Arbitrage-free:** Only at the 13 CMT knot points {T_i}, where the spline
-passes exactly through the observed par rates (error < 10⁻¹⁰ bps).
-
-**Between tenors:** The spline is smooth and monotone where the par curve is
-monotone, providing "reasonable" interpolated values. However, the implied
-discount factors and forward rates are NOT guaranteed to be arbitrage-free.
-The monotonicity condition mitigates pathological cases but does not eliminate
-the possibility of negative implied forwards under stress scenarios.
-
-**Practical stance:** Under normal market conditions (par curve changes of
-< 200 bps across any interval), the interpolated par rates are effectively
-arbitrage-free. Verify explicitly under stress scenarios if required.
-
-### Primary Use: Generating Uniform Grids
-
-The most important application is generating a fine, uniform par rate grid
-to feed into Bootstrap 1 (Stage 5). This solves two problems at once:
-
-1. **Fills the 10Y→20Y gap:** Rather than a single cubic spanning 10 years,
-   Bootstrap 1 operates on monthly steps with smooth input from Longstaff.
-
-2. **Removes PCA weighting artifacts:** A uniform 1M grid gives every
-   maturity equal representation in the covariance matrix, so PCA factors
-   reflect genuine term structure variation rather than the uneven density
-   of CMT tenor points.
+So "building a historical panel for PCA" isn't a distinct workflow requiring a
+manual per-date loop — it's simply what running the CLI once over the full
+workbook already produces. The NPZ's `discount_factors_T`, `spot_rates_cc_T`, and
+`forward_endpoint_T` arrays are already shaped `(N_dates, 14_tenors)`.
 
 ---
 
-## 5. The Uniform Grid Pipeline
+## 5. Quick Start
 
-Stage 5 combines Longstaff's Hack with Bootstrap 1 on a 360-tenor monthly grid:
+### CLI (recommended — this is what `scripts/run_bootstrap.py` wraps)
 
-    Stage 4: Longstaff → S(1Mo), S(2Mo), ..., S(360Mo)    [360 par rates]
-    Stage 5: Bootstrap 1 → P(0,1Mo), ..., P(0,360Mo)      [360 discount factors]
-             → f(1Mo), f(2Mo), ..., f(360Mo)               [360 forward rates]
+```bash
+# Scheme 2 (piecewise linear forward — recommended default)
+python src/cmt_bootstrap.py --workbook Treasury_CMT_Data_Tool.xlsx --scheme 2
 
-**Why Bootstrap 1 (not Bootstrap 2) on the uniform grid:**
+# Scheme 3 (monotone cubic — smoother) with Excel output too
+python src/cmt_bootstrap.py --workbook Treasury_CMT_Data_Tool.xlsx --scheme 3 --write-excel
 
-Bootstrap 2's C⁰ continuity chains all intervals: b_i = a_{i-1}·τ_{i-1} + b_{i-1}.
-On a 14-tenor sparse grid, this is beneficial — it enforces smoothness.
-On a 360-tenor uniform grid with τ = 1/12, the chain of 360 coupled equations
-produces resonant oscillation: small fitting errors amplify interval by interval
-into a ±70% sawtooth pattern. Bootstrap 1 has no inter-interval coupling —
-each is solved independently. On a fine grid:
-
-    max(forward jump at knot) ≈ S'(T)·Δτ → 0  as Δτ → 0
-
-The smoothness comes from Longstaff; Bootstrap 1 provides exactness at every node.
-
-**The PCA-ready forward vector:**
-
-The result is a 360-element vector [f(1Mo), f(2Mo), ..., f(360Mo)] where:
-- All entries are continuously compounded instantaneous forward rates
-- Equal 1M spacing — no weighting distortion in the covariance matrix
-- Range typically 3%–6% for normal yield curve environments
-- Direct input to PCA, Nelson-Siegel fitting, or other functional analysis
-
----
-
-## 6. Quick Start
-
-### Installation
-
-```python
-# Dependencies: numpy, scipy (standard scientific Python stack)
-pip install numpy scipy
-
-# Import
-from bootstrap_pipeline import (
-    Bootstrap1, Bootstrap2, Bootstrap3,
-    LongstaffHack, UniformGridPipeline,
-    run_pipeline, CMT_MATURITIES
-)
+# Or via the convenience wrapper (defaults --workbook to Treasury_CMT_Data_Tool.xlsx)
+python scripts/run_bootstrap.py --scheme 2
+python scripts/run_bootstrap.py --scheme 3 --write-excel
+python scripts/run_bootstrap.py --scheme 2 --nu 12
 ```
 
-### Basic Usage — Run All Stages
+This writes `Treasury_CMT_Data_Tool_curves_S<scheme>_<minyear>-<maxyear>.npz`
+(and `.xlsx` if `--write-excel` is passed) next to the workbook.
+
+### Direct Python API — single date
 
 ```python
-from bootstrap_pipeline import run_pipeline
+import numpy as np
+from cmt_bootstrap import bootstrap_scheme1, bootstrap_scheme3, parse_tenor_to_years
+
+tenor_labels = ['1Mo','1.5Mo','2Mo','3Mo','4Mo','6Mo','1Yr','2Yr',
+                '3Yr','5Yr','7Yr','10Yr','20Yr','30Yr']
+T = np.array([parse_tenor_to_years(t) for t in tenor_labels])
+
+# Par rates in decimal (e.g. 4.25% -> 0.0425); use np.nan for a missing tenor
+S = np.array([0.0547, 0.0545, 0.0544, 0.0540, 0.0537, 0.0527,
+              0.0502, 0.0471, 0.0454, 0.0433, 0.0428, 0.0436, 0.0471, 0.0451])
+r0 = 0.0533  # short-rate anchor (SOFR), needed by Schemes 2 and 3
+
+b1 = bootstrap_scheme1(S, T, nu=24)
+b3 = bootstrap_scheme3(S, T, r0=r0, nu=24)
+
+print(b1.z * 100)        # Scheme 1 spot rates (cc, percent) at each tenor
+print(b3.f_end * 100)    # Scheme 3 forward rate at each tenor's own endpoint
+print(b1.discount_fn(8.5))  # P(0, 8.5y) under the Scheme 1 step-function forward
+```
+
+### Reading an existing NPZ panel
+
+```python
 import numpy as np
 
-# CMT par rates in percent
-par_rates = {
-    '1Mo': 4.38, '1.5Mo': 4.36, '2Mo': 4.33, '3Mo': 4.32, '4Mo': 4.30, '6Mo': 4.27,
-    '1Yr': 4.17, '2Yr': 4.24, '3Yr': 4.27, '5Yr': 4.38, '7Yr': 4.48,
-    '10Yr': 4.57, '20Yr': 4.87, '30Yr': 4.83,
-}
-r0 = 0.043   # SOFR (short rate anchor for B2/B3 initial condition)
+data = np.load('Treasury_CMT_Data_Tool_curves_S2_1990-2026.npz', allow_pickle=True)
+print(list(data.keys()))          # full schema — see §8 API Reference
 
-results = run_pipeline(par_rates, r0=r0)
-# Returns dict: 'b1', 'b2', 'b3', 'longstaff', 'uniform'
-```
+dates  = data['dates']             # (N,) datetime64[D]
+labels = [str(x) for x in data['tenor_labels']]
+spot   = data['spot_rates_cc_T']   # (N, 14) continuously-compounded spot rates
 
-### Accessing Results
-
-```python
-b1      = results['b1']       # Bootstrap 1 CurveResult
-b3      = results['b3']       # Bootstrap 3 CurveResult
-spline  = results['longstaff']  # LongstaffSpline
-uniform = results['uniform']    # 360-tenor CurveResult
-
-# Spot rates (continuous compounding)
-print(b1.spot_rates['10Yr'] * 100)   # e.g. 4.5912%
-
-# Discount factors
-print(b3.discount_factors['5Yr'])    # e.g. 0.8187
-
-# Instantaneous forward at any maturity
-print(b3.forward_at(8.5))           # f(8.5Y) interpolated
-
-# Longstaff: par rate at any maturity
-print(spline.par_rate(8.5) * 100)   # S(8.5Y) in percent
-
-# PCA-ready forward vector (360 elements)
-fwds = np.array([uniform.forward_params[t]['f'] * 100
-                 for t in uniform.tenors])
-# fwds is now ready for: PCA, NSS fitting, curve comparison
-```
-
-### Accessing the Uniform Grid
-
-```python
-# Dense forward curve for plotting
-t_grid, f_grid = uniform.forward_curve(n=500)
-
-# Individual forward rates
-for m in [1, 6, 12, 24, 60, 120, 240, 360]:
-    from bootstrap_pipeline import _tenor_label
-    lbl = _tenor_label(m)
-    f   = uniform.forward_params[lbl]['f'] * 100
-    print(f'f({m:3d}Mo) = {f:.4f}%')
-
-# Validate round-trip precision
-rt = uniform.roundtrip_bps()
-print(f'Max round-trip error: {max(abs(v) for v in rt.values()):.2e} bps')
-```
-
-### Run a Single Bootstrap Stage
-
-```python
-from bootstrap_pipeline import Bootstrap1, Bootstrap3
-
-# Bootstrap 1 only
-b1 = Bootstrap1().run(par_rates, r0=r0)
-b1.print_summary()
-
-# Bootstrap 3 only
-b3 = Bootstrap3().run(par_rates, r0=r0)
-
-# Longstaff only (no bootstrap)
-from bootstrap_pipeline import LongstaffHack
-spline = LongstaffHack().fit(par_rates)
-spline.print_knot_check()
-
-# Uniform grid only
-from bootstrap_pipeline import UniformGridPipeline
-spline, uniform = UniformGridPipeline().run(par_rates, r0=r0)
-```
-
-### Suppress Output
-
-```python
-results = run_pipeline(par_rates, r0=r0, verbose=False)
+i10y = labels.index('10Yr')
+print(spot[-1, i10y] * 100)        # most recent 10Yr spot rate, in percent
 ```
 
 ---
 
----
+## 6. Bootstrap Workflows — From Data to Analysis
 
-## 7. Bootstrap Workflows — From Data to Analysis
+### Workflow 1: Ad-Hoc Analysis (one date, interactively)
 
-This section describes the complete workflows for different use cases, integrating the Excel data platform with the Python bootstrap pipeline.
+**Use case:** Inspect the curve for a specific date (e.g. quarter-end).
+**Time:** ~1 minute, if the panel NPZ already exists.
 
-### Workflow Overview
-
-Three primary workflows, depending on your needs:
-
-1. **Ad-Hoc Analysis Workflow** — Quick one-off curve construction
-2. **Production Workflow** — Automated daily/weekly bootstrapping
-3. **Research Workflow** — Historical panel construction for PCA/modeling
-
----
-
-### Workflow 1: Ad-Hoc Analysis (Excel → Python → Results)
-
-**Use case:** Generate a yield curve for a specific date (e.g., quarter-end).
-
-**Time:** ~5 minutes  
-**Tools:** Excel + Python interactive session  
-**Output:** Discount factors, spot rates, forward curve for one date
-
-#### Step-by-Step
-
-**Step 1: Update Excel with CMT Data**
-
-```
-1. Open Treasury_CMT_Data_Tool.xlsx
-2. Go to Config sheet
-   - Set Start Year = current year (e.g., 2024)
-   - Set End Year = current year
-3. Go to CMT Rates sheet
-4. Click "Update CMT Rates" button
-5. Wait ~30 seconds for download
-6. Verify: Latest date appears in row 12
-```
-
-**Step 2: Identify Target Date**
-
-```
-1. Scroll CMT Rates sheet to find your date (e.g., 12/31/2024)
-2. Check all 14 maturities have values (no blanks)
-3. Note any unusual values (data quality check)
-```
-
-**Step 3: Run Python Bootstrap (Interactive)**
-
-Open Python/Jupyter:
+If you already have an NPZ panel covering that date, just index into it — no
+re-bootstrapping needed:
 
 ```python
-import pandas as pd
-from bootstrap_pipeline import run_pipeline
-
-# Read Excel
-df = pd.read_excel('Treasury_CMT_Data_Tool.xlsx', 
-                   sheet_name='CMT Rates')
-
-# Filter to target date
-target_date = '2024-12-31'
-row = df[df['Date'] == target_date].iloc[0]
-
-# Build par_pct dict
-par_pct = {
-    '1Mo': row['1 Mo'], '1.5Mo': row['1.5 Mo'], '2Mo': row['2 Mo'],
-    '3Mo': row['3 Mo'], '4Mo': row['4 Mo'], '6Mo': row['6 Mo'],
-    '1Yr': row['1 Yr'], '2Yr': row['2 Yr'], '3Yr': row['3 Yr'],
-    '5Yr': row['5 Yr'], '7Yr': row['7 Yr'], '10Yr': row['10 Yr'],
-    '20Yr': row['20 Yr'], '30Yr': row['30 Yr'],
-}
-
-# Set SOFR (r0) - use 1Mo as proxy
-r0 = par_pct['1Mo'] / 100
-
-# Run all methods
-results = run_pipeline(par_pct, r0=r0, verbose=True)
-
-# Extract results
-b1 = results['b1']        # Bootstrap 1 (piecewise constant)
-b3 = results['b3']        # Bootstrap 3 (monotone cubic)
-uniform = results['uniform']  # B3 on 360-month grid
-```
-
-**Step 4: Inspect Results**
-
-```python
-# Check precision
-rt_b3 = b3.roundtrip_bps()
-print(f"B3 max roundtrip: {max(abs(v) for v in rt_b3.values()):.2e} bps")
-
-# Spot rates at key tenors
-for t in ['1Mo', '1Yr', '5Yr', '10Yr', '30Yr']:
-    print(f"{t:>5}: {b3.spot_rates[t]*100:.4f}%")
-
-# Forward curve from uniform grid
 import numpy as np
-fwds = [uniform.forward_params[t]['d']*100 for t in uniform.tenors]
-print(f"\nForward range: {min(fwds):.2f}% - {max(fwds):.2f}%")
+
+data   = np.load('Treasury_CMT_Data_Tool_curves_S3_1990-2026.npz', allow_pickle=True)
+dates  = data['dates']
+labels = [str(x) for x in data['tenor_labels']]
+
+idx = np.where(dates == np.datetime64('2024-12-31'))[0][0]
+for t in ['3Mo', '2Yr', '5Yr', '10Yr', '30Yr']:
+    j = labels.index(t)
+    print(f"{t:>5}: {data['spot_rates_cc_T'][idx, j]*100:.4f}%  "
+          f"(roundtrip err {data['par_rate_err_bp'][idx, j]:.2e} bp)")
 ```
 
-**Step 5: Record Parameters in Excel**
-
-Open **Bootstrap Params** sheet, add:
-
-| Run Date | Data Date | Method | r0 (%) | ν | Precision | Forward Range | Notes |
-|----------|-----------|--------|--------|---|-----------|---------------|-------|
-| 02/13/26 | 12/31/24  | B3 Uniform | 4.30 | 24 | 1.04e-12 | 4.01%-5.61% | Ad-hoc Q4 analysis |
-
-**Step 6: Use Results**
-
-```python
-# Example: Compute DV01 for 10Y
-P_10Y = b3.discount_factors['10Yr']
-T_10Y = b3.maturities['10Yr']
-
-# Bump 10Y par rate by 1bp
-par_pct_bumped = par_pct.copy()
-par_pct_bumped['10Yr'] += 0.01  # +1bp
-
-# Re-bootstrap
-results_bumped = run_pipeline(par_pct_bumped, r0=r0, verbose=False)
-P_10Y_bumped = results_bumped['b3'].discount_factors['10Yr']
-
-# DV01 (approximate)
-DV01_10Y = (P_10Y_bumped - P_10Y) * 10000  # per $1MM notional
-print(f"10Y DV01: ${DV01_10Y:.2f}")
-```
+If the date isn't in an existing panel yet, either re-run
+`scripts/run_bootstrap.py` after updating the workbook, or call
+`bootstrap_scheme1/2/3` directly on that single date's par rates (see §5).
 
 **When to use:** One-off analysis, presentations, due diligence.
 
 ---
 
-### Workflow 2: Production Workflow (Automated Daily)
+### Workflow 2: Production (Automated Daily)
 
-**Use case:** Nightly batch job to bootstrap latest CMT data.
+**Use case:** Nightly job that keeps the panel current.
+**Architecture:** a scheduled task simply re-runs the existing CLI on the
+freshly-updated workbook — there's no separate "daily" code path to maintain.
 
-**Time:** ~1 minute automated  
-**Tools:** Cron job + Python script  
-**Output:** Daily curve files, database updates, reports
-
-#### Architecture
-
-```
-┌─────────────────────┐
-│  Cron Job           │  Daily at 5:00 PM ET (after Treasury publishes)
-│  (scheduled task)   │
-└──────────┬──────────┘
-           │
-┌──────────▼──────────┐
-│  Python Script      │  update_daily_curves.py
-│  (automated)        │
-└──────────┬──────────┘
-           │
-           ├──> Fetch latest CMT from Treasury API
-           ├──> Run Bootstrap 3 + Uniform grid
-           ├──> Save results to database / files
-           ├──> Generate summary report
-           └──> Email alerts on errors
-```
-
-#### Production Script Template
-
-Create `update_daily_curves.py`:
-
-```python
-#!/usr/bin/env python3
-"""
-Daily Bootstrap Pipeline — Production Script
-
-Fetches latest Treasury CMT data and runs Bootstrap 3.
-Saves results to files and database.
-
-Usage:
-    python update_daily_curves.py [--date YYYY-MM-DD]
-    
-If --date not provided, uses latest available date from Treasury.
-"""
-
-import pandas as pd
-import numpy as np
-import argparse
-from datetime import datetime, timedelta
-from pathlib import Path
-import logging
-import sys
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('bootstrap_production.log'),
-        logging.StreamHandler()
-    ]
-)
-
-def fetch_latest_cmt():
-    """Fetch latest CMT data from Treasury or Excel file."""
-    try:
-        df = pd.read_excel('Treasury_CMT_Data_Tool.xlsx', 
-                          sheet_name='CMT Rates',
-                          parse_dates=['Date'])
-        
-        # Get most recent date
-        latest_date = df['Date'].max()
-        row = df[df['Date'] == latest_date].iloc[0]
-        
-        logging.info(f"Loaded CMT data for {latest_date.strftime('%Y-%m-%d')}")
-        return row, latest_date
-        
-    except Exception as e:
-        logging.error(f"Failed to load CMT data: {e}")
-        sys.exit(1)
-
-def build_par_dict(row):
-    """Build par_pct dictionary from Excel row."""
-    return {
-        '1Mo': row['1 Mo'], '1.5Mo': row['1.5 Mo'], '2Mo': row['2 Mo'],
-        '3Mo': row['3 Mo'], '4Mo': row['4 Mo'], '6Mo': row['6 Mo'],
-        '1Yr': row['1 Yr'], '2Yr': row['2 Yr'], '3Yr': row['3 Yr'],
-        '5Yr': row['5 Yr'], '7Yr': row['7 Yr'], '10Yr': row['10 Yr'],
-        '20Yr': row['20 Yr'], '30Yr': row['30 Yr'],
-    }
-
-def run_bootstrap_safe(par_pct, r0):
-    """Run bootstrap with error handling."""
-    try:
-        from bootstrap_pipeline import run_pipeline
-        
-        logging.info("Running bootstrap pipeline...")
-        results = run_pipeline(par_pct, r0=r0, verbose=False)
-        
-        # Validate
-        uniform = results['uniform']
-        rt = uniform.roundtrip_bps()
-        max_rt = max(abs(v) for v in rt.values())
-        
-        if max_rt > 1e-6:
-            logging.warning(f"Round-trip error {max_rt:.2e} bps exceeds tolerance")
-        else:
-            logging.info(f"Bootstrap successful, precision: {max_rt:.2e} bps")
-        
-        return results
-        
-    except Exception as e:
-        logging.error(f"Bootstrap failed: {e}")
-        sys.exit(1)
-
-def save_results(results, date, output_dir='./curves'):
-    """Save results to files."""
-    output_dir = Path(output_dir)
-    output_dir.mkdir(exist_ok=True)
-    
-    date_str = date.strftime('%Y%m%d')
-    
-    # Save uniform forward vector (PCA-ready)
-    uniform = results['uniform']
-    fwd_vector = np.array([uniform.forward_params[t]['d'] 
-                          for t in uniform.tenors])
-    
-    fwd_file = output_dir / f'forwards_{date_str}.npy'
-    np.save(fwd_file, fwd_vector)
-    logging.info(f"Saved forward vector: {fwd_file}")
-    
-    # Save discount factors (CSV for readability)
-    b3 = results['b3']
-    df_curve = pd.DataFrame({
-        'Tenor': list(b3.tenors),
-        'Maturity': [b3.maturities[t] for t in b3.tenors],
-        'Par_Rate': [b3.par_rates[t] for t in b3.tenors],
-        'Spot_Rate': [b3.spot_rates[t] for t in b3.tenors],
-        'Discount_Factor': [b3.discount_factors[t] for t in b3.tenors],
-    })
-    
-    curve_file = output_dir / f'curve_{date_str}.csv'
-    df_curve.to_csv(curve_file, index=False)
-    logging.info(f"Saved curve data: {curve_file}")
-    
-    return fwd_file, curve_file
-
-def generate_report(results, date):
-    """Generate summary report."""
-    uniform = results['uniform']
-    b3 = results['b3']
-    
-    fwds = [uniform.forward_params[t]['d']*100 for t in uniform.tenors]
-    rt = uniform.roundtrip_bps()
-    
-    report = f"""
-    {'='*60}
-    Daily Bootstrap Report — {date.strftime('%Y-%m-%d')}
-    {'='*60}
-    
-    Method:         Bootstrap 3 + Uniform Grid (360 tenors)
-    Precision:      {max(abs(v) for v in rt.values()):.2e} bps
-    
-    Forward Curve:
-      Range:        {min(fwds):.2f}% — {max(fwds):.2f}%
-      Mean:         {np.mean(fwds):.2f}%
-      Std Dev:      {np.std(fwds):.2f}%
-    
-    Spot Rates (B3):
-      1Yr:          {b3.spot_rates['1Yr']*100:.4f}%
-      5Yr:          {b3.spot_rates['5Yr']*100:.4f}%
-      10Yr:         {b3.spot_rates['10Yr']*100:.4f}%
-      30Yr:         {b3.spot_rates['30Yr']*100:.4f}%
-    
-    Status:         ✓ SUCCESS
-    {'='*60}
-    """
-    
-    logging.info(report)
-    
-    # Save report
-    report_file = Path('./reports') / f'bootstrap_{date.strftime("%Y%m%d")}.txt'
-    report_file.parent.mkdir(exist_ok=True)
-    report_file.write_text(report)
-    
-    return report
-
-def main():
-    parser = argparse.ArgumentParser(description='Daily Bootstrap Pipeline')
-    parser.add_argument('--date', type=str, help='Date to bootstrap (YYYY-MM-DD)')
-    args = parser.parse_args()
-    
-    logging.info("="*60)
-    logging.info("Daily Bootstrap Pipeline Started")
-    logging.info("="*60)
-    
-    # Fetch data
-    row, date = fetch_latest_cmt()
-    
-    # Build parameters
-    par_pct = build_par_dict(row)
-    r0 = par_pct['1Mo'] / 100  # Use 1Mo as SOFR proxy
-    
-    # Run bootstrap
-    results = run_bootstrap_safe(par_pct, r0)
-    
-    # Save results
-    save_results(results, date)
-    
-    # Generate report
-    generate_report(results, date)
-    
-    logging.info("✓ Pipeline completed successfully")
-
-if __name__ == '__main__':
-    main()
-```
-
-#### Scheduling (Linux/Mac)
-
-Add to crontab:
 ```bash
-# Run daily at 5:00 PM ET (after Treasury publishes at ~4:00 PM)
-0 17 * * 1-5 cd /path/to/bootstrap && python update_daily_curves.py >> production.log 2>&1
+# 1. Pull the latest CMT rates into the workbook
+python scripts/update_treasury_cmt.py
+
+# 2. Re-run the bootstrap over the whole (now-extended) history
+python scripts/run_bootstrap.py --scheme 2
 ```
 
-#### Scheduling (Windows)
+Because `main()` reprocesses every date in the workbook each time, the output
+NPZ is always a complete, consistent panel — there's no incremental/append mode
+to reason about.
 
-Use Task Scheduler:
-1. Create Basic Task
-2. Trigger: Daily at 5:00 PM
-3. Action: Start Program → `python.exe`
-4. Arguments: `C:\path\to\update_daily_curves.py`
+**Scheduling (cron, Linux/Mac):**
+```bash
+0 17 * * 1-5 cd /path/to/CMTRateBootstrap && python scripts/update_treasury_cmt.py && python scripts/run_bootstrap.py --scheme 2 >> production.log 2>&1
+```
 
-**When to use:** Production risk systems, daily PnL attribution, automated reporting.
+**Scheduling (Windows Task Scheduler):** Basic Task → Daily trigger → Action:
+`python.exe` with arguments pointing at the two scripts above in sequence (or a
+small `.bat`/`.ps1` that chains them).
+
+**When to use:** Keeping a live panel for risk systems or daily reporting.
 
 ---
 
-### Workflow 3: Research Workflow (Historical Panel)
+### Workflow 3: Research (Historical Panel for PCA)
 
-**Use case:** Build T × 360 panel of forward curves for PCA, modeling, backtesting.
+**Use case:** PCA, tail-risk fitting, or backtesting over the full history.
 
-**Time:** ~30 minutes for full history (1990-present)  
-**Tools:** Python batch script  
-**Output:** Multi-date forward curve matrix, PCA factors, model parameters
+As noted in [§4](#4-how-the-historical-panel-is-built), this doesn't require a
+manual per-date loop — the NPZ produced by a single Scheme 1 run over the full
+workbook (1990–present) already **is** the panel:
 
-#### Research Pipeline
-
-**Goal:** Create a panel dataset:
-- **Rows:** T dates (e.g., all quarter-ends 1990-2025)
-- **Columns:** 360 monthly forward rates (1Mo through 30Yr)
-- **Use:** PCA, factor models, scenario generation
-
-#### Step-by-Step
-
-**Step 1: Define Date Range**
-
-```python
-import pandas as pd
-from datetime import datetime
-
-# Option A: All quarter-ends
-dates = pd.date_range('1990-03-31', '2025-12-31', freq='Q')
-
-# Option B: All month-ends
-dates = pd.date_range('2020-01-31', '2025-12-31', freq='M')
-
-# Option C: Custom list
-dates = ['2024-03-31', '2024-06-30', '2024-09-30', '2024-12-31']
-dates = pd.to_datetime(dates)
-
-print(f"Will bootstrap {len(dates)} dates")
+```bash
+python scripts/run_bootstrap.py --scheme 1   # PCA/tail-risk in this repo is built on Scheme 1
 ```
 
-**Step 2: Batch Bootstrap**
+`data/samples/Treasury_CMT_Data_Tool_curves_S1_1990-2026.npz` is exactly this —
+a pre-built Scheme 1 panel spanning 1990–2026, ready to feed straight into
+`src/vol_analysis.py` (see [§10](#10-downstream-applications)).
 
-```python
-from bootstrap_pipeline import run_pipeline
-import numpy as np
-
-# Load all CMT data
-df_cmt = pd.read_excel('Treasury_CMT_Data_Tool.xlsx', 
-                       sheet_name='CMT Rates',
-                       parse_dates=['Date'])
-
-# Storage
-forward_panel = []
-metadata = []
-
-for date in dates:
-    print(f"Processing {date.strftime('%Y-%m-%d')}...", end=' ')
-    
-    # Get CMT data for this date
-    try:
-        row = df_cmt[df_cmt['Date'] == date].iloc[0]
-    except IndexError:
-        print("SKIP (no data)")
-        continue
-    
-    # Build par_pct
-    par_pct = {
-        '1Mo': row['1 Mo'], '1.5Mo': row['1.5 Mo'], '2Mo': row['2 Mo'],
-        '3Mo': row['3 Mo'], '4Mo': row['4 Mo'], '6Mo': row['6 Mo'],
-        '1Yr': row['1 Yr'], '2Yr': row['2 Yr'], '3Yr': row['3 Yr'],
-        '5Yr': row['5 Yr'], '7Yr': row['7 Yr'], '10Yr': row['10 Yr'],
-        '20Yr': row['20 Yr'], '30Yr': row['30 Yr'],
-    }
-    
-    # Handle missing 1.5Mo
-    par_pct = {k: v for k, v in par_pct.items() if pd.notna(v)}
-    
-    # SOFR proxy
-    r0 = par_pct['1Mo'] / 100
-    
-    # Bootstrap
-    try:
-        results = run_pipeline(par_pct, r0=r0, verbose=False)
-        uniform = results['uniform']
-        
-        # Extract forward vector
-        fwd_vector = np.array([uniform.forward_params[t]['d']*100 
-                              for t in uniform.tenors])
-        
-        forward_panel.append(fwd_vector)
-        metadata.append({
-            'date': date,
-            'r0': r0,
-            'fwd_mean': fwd_vector.mean(),
-            'fwd_std': fwd_vector.std(),
-        })
-        
-        print(f"OK (mean fwd: {fwd_vector.mean():.2f}%)")
-        
-    except Exception as e:
-        print(f"ERROR: {e}")
-        continue
-
-# Convert to numpy array
-forward_panel = np.array(forward_panel)  # Shape: (T, 360)
-metadata_df = pd.DataFrame(metadata)
-
-print(f"\nPanel shape: {forward_panel.shape}")
-print(f"Date range: {metadata_df['date'].min()} to {metadata_df['date'].max()}")
-```
-
-**Step 3: Save Panel**
-
-```python
-# Save for later analysis
-np.save('forward_panel_1990_2025.npy', forward_panel)
-metadata_df.to_csv('forward_panel_metadata.csv', index=False)
-
-print(f"✓ Saved panel: {forward_panel.shape[0]} dates × {forward_panel.shape[1]} maturities")
-```
-
-**Step 4: Run PCA**
-
-```python
-from sklearn.decomposition import PCA
-
-# Standardize (optional, but recommended)
-from sklearn.preprocessing import StandardScaler
-
-scaler = StandardScaler()
-forward_panel_scaled = scaler.fit_transform(forward_panel)
-
-# PCA with 3 components (Level, Slope, Curvature)
-pca = PCA(n_components=3)
-factors = pca.fit_transform(forward_panel_scaled)
-
-print(f"\nPCA Results:")
-print(f"Explained variance: {pca.explained_variance_ratio_}")
-print(f"  PC1 (Level):     {pca.explained_variance_ratio_[0]*100:.1f}%")
-print(f"  PC2 (Slope):     {pca.explained_variance_ratio_[1]*100:.1f}%")
-print(f"  PC3 (Curvature): {pca.explained_variance_ratio_[2]*100:.1f}%")
-
-# Save PCA results
-np.save('pca_factors.npy', factors)
-np.save('pca_components.npy', pca.components_)
-np.save('pca_explained_variance.npy', pca.explained_variance_ratio_)
-
-# Visualize first component (Level)
-import matplotlib.pyplot as plt
-
-plt.figure(figsize=(12, 4))
-plt.plot(range(1, 361), pca.components_[0], label='PC1 (Level)')
-plt.xlabel('Maturity (months)')
-plt.ylabel('Loading')
-plt.title('First Principal Component — Level Shift')
-plt.grid(True, alpha=0.3)
-plt.legend()
-plt.savefig('pca_level_component.png', dpi=150)
-print("✓ Saved PCA level component chart")
-```
-
-**When to use:** Research papers, model development, backtesting trading strategies.
+**When to use:** Research, model development, backtesting.
 
 ---
 
@@ -1009,584 +412,301 @@ print("✓ Saved PCA level component chart")
 
 | Aspect | Ad-Hoc | Production | Research |
 |--------|--------|------------|----------|
-| **Frequency** | Once or rarely | Daily | One-time batch |
-| **Automation** | Manual | Fully automated | Semi-automated |
-| **Data scope** | 1 date | Latest only | T dates (panel) |
-| **Output** | Interactive results | Files + DB | Panel matrix |
-| **Time** | 5 min | 1 min (unattended) | 30 min–2 hours |
-| **Tools** | Jupyter | Cron + script | Batch script |
-| **Users** | Analysts | Risk/operations | Researchers |
+| **Frequency** | Once or rarely | Daily | One-time / occasional refresh |
+| **Mechanism** | Index into existing NPZ | Re-run CLI on updated workbook | Run CLI once over full history |
+| **Output** | In-memory values | Refreshed NPZ (+ optional xlsx) | Full NPZ panel |
+| **Tools** | Python/Jupyter | Cron/Task Scheduler + CLI | CLI + `vol_analysis.py` |
 
 ---
 
-### Common Patterns Across Workflows
-
-**1. Data Quality Checks**
-
-Always verify before bootstrapping:
-```python
-# Check for missing data
-missing = [k for k, v in par_pct.items() if pd.isna(v)]
-if missing:
-    print(f"Warning: Missing data for {missing}")
-
-# Check for unreasonable values
-for k, v in par_pct.items():
-    if v < 0 or v > 20:  # Rates outside 0-20%
-        print(f"Warning: Unusual rate {k} = {v}%")
-
-# Check curve monotonicity (usually upward sloping)
-rates = [par_pct['1Mo'], par_pct['1Yr'], par_pct['5Yr'], 
-         par_pct['10Yr'], par_pct['30Yr']]
-if not all(rates[i] <= rates[i+1] for i in range(len(rates)-1)):
-    print("Warning: Non-monotonic curve (may be inverted)")
-```
-
-**2. Error Handling**
-
-```python
-try:
-    results = run_pipeline(par_pct, r0=r0, verbose=False)
-except Exception as e:
-    logging.error(f"Bootstrap failed: {e}")
-    # Send alert email
-    # Skip this date
-    # Continue with next date
-```
-
-**3. Result Validation**
-
-```python
-# Check round-trip precision
-rt = results['uniform'].roundtrip_bps()
-max_rt = max(abs(v) for v in rt.values())
-assert max_rt < 1e-6, f"Precision check failed: {max_rt:.2e} bps"
-
-# Check forward range is reasonable
-fwds = [results['uniform'].forward_params[t]['d']*100 
-        for t in results['uniform'].tenors]
-assert min(fwds) > -5, "Negative forwards detected"
-assert max(fwds) < 25, "Unreasonably high forwards"
-```
-
-**4. Parameter Recording**
-
-For all workflows, maintain an audit log:
-```python
-log_entry = {
-    'timestamp': datetime.now(),
-    'data_date': date,
-    'method': 'B3 Uniform',
-    'r0': r0,
-    'nu': 24,
-    'precision_bps': max_rt,
-    'fwd_min': min(fwds),
-    'fwd_max': max(fwds),
-}
-
-# Append to log file or database
-```
-
----
-
-## 8. Examples — Recent Quarter-End Data
-
-Three recent US Treasury quarter-end dates illustrate different curve shapes:
-
-| Date | Shape | Key Feature |
-|------|-------|-------------|
-| Jun 28 2024 | Deeply inverted | Fed funds at peak (~5.33%), 3Mo > 10Yr by 104 bps |
-| Sep 30 2024 | Transitioning | Post-cut normalization underway, curve steepening |
-| Dec 31 2024 | Bear steepening | Short end anchored by easing cycle, long end rising |
-
-Source: US Treasury CMT par rates, retrieved from treasury.gov.
-Note: All 14 tenors used (1Mo through 30Yr, including 1.5Mo). ν = 24 ensures
-ν·τ is an exact integer for all intervals, including 1.5Mo (τ = 0.5/12 → ν·τ = 1).
-
----
-
-### Example 1: June 28, 2024 — Peak Inversion
-
-```python
-from bootstrap_pipeline import run_pipeline
-import numpy as np
-
-# Jun 28 2024 — Deeply inverted: 3Mo=5.40%, 10Yr=4.36%
-# SOFR target range 5.25-5.50%; 10Y-3M spread = -104 bps
-par_jun2024 = {
-    '1Mo': 5.47, '1.5Mo': 5.45, '2Mo': 5.44, '3Mo': 5.40, '4Mo': 5.37, '6Mo': 5.27,
-    '1Yr': 5.02, '2Yr': 4.71, '3Yr': 4.54, '5Yr': 4.33, '7Yr': 4.28,
-    '10Yr': 4.36, '20Yr': 4.71, '30Yr': 4.51,
-}
-r0 = 0.0533   # SOFR mid-target
-
-results_jun24 = run_pipeline(par_jun2024, r0=r0, verbose=False)
-
-b1   = results_jun24['b1']
-b3   = results_jun24['b3']
-unif = results_jun24['uniform']
-
-print('Jun 28 2024 — Inverted Curve')
-print('-' * 50)
-print(f'  3Mo spot  (B1): {b1.spot_rates["3Mo"]*100:.4f}%')
-print(f'  10Yr spot (B1): {b1.spot_rates["10Yr"]*100:.4f}%')
-print(f'  10-3Mo spread:  {(b1.spot_rates["10Yr"]-b1.spot_rates["3Mo"])*100:.1f} bps')
-print()
-print('  Forward rates at key maturities:')
-for m in [3, 12, 24, 60, 120, 240, 360]:
-    from bootstrap_pipeline import _tenor_label
-    lbl = _tenor_label(m)
-    f   = unif.forward_params[lbl]['f'] * 100
-    print(f'    f({lbl:>6}) = {f:.4f}%')
-
-# Forward curve is humped: peaks near 3-6Mo then declines
-# reflecting market pricing of eventual Fed easing
-```
-
-**Expected output (approximate):**
-```
-Jun 28 2024 — Inverted Curve
---------------------------------------------------
-  3Mo spot  (B1): 5.3888%
-  10Yr spot (B1): 4.3505%
-  10-3Mo spread:  -103.8 bps
-
-  Forward rates at key maturities:
-    f(   3Mo) = 5.4144%
-    f(   1Yr) = 4.6951%
-    f(   2Yr) = 4.2011%
-    f(   5Yr) = 3.9827%
-    f(  10Yr) = 4.2046%
-    f(  20Yr) = 5.2232%
-    f(  30Yr) = 3.7659%
-```
-
-The inverted curve's signature in forward space: high short forwards declining
-sharply through 1-2Y as the market prices in Fed cuts, then rising at the long
-end reflecting the term premium.
-
----
-
-### Example 2: September 30, 2024 — Post-Pivot Transition
-
-```python
-# Sep 30 2024 — Fed cut 50bps on Sep 18; curve beginning to normalize
-# Short end falling, long end sticky; 10Y-2Y spread turned positive again
-par_sep2024 = {
-    '1Mo': 4.96, '1.5Mo': 4.90, '2Mo': 4.84, '3Mo': 4.61, '4Mo': 4.46, '6Mo': 4.39,
-    '1Yr': 4.07, '2Yr': 3.64, '3Yr': 3.58, '5Yr': 3.57, '7Yr': 3.64,
-    '10Yr': 3.78, '20Yr': 4.20, '30Yr': 4.11,
-}
-r0 = 0.0490   # SOFR post first cut
-
-results_sep24 = run_pipeline(par_sep2024, r0=r0, verbose=False)
-
-b1   = results_sep24['b1']
-b3   = results_sep24['b3']
-unif = results_sep24['uniform']
-spl  = results_sep24['longstaff']
-
-print('Sep 30 2024 — Transitional Curve')
-print('-' * 50)
-print('  Spot rates — B1 vs B3:')
-for t in ['3Mo', '1Yr', '2Yr', '5Yr', '10Yr', '20Yr', '30Yr']:
-    s1 = b1.spot_rates[t] * 100
-    s3 = b3.spot_rates[t] * 100
-    print(f'    {t:>5}: B1={s1:.4f}%  B3={s3:.4f}%  diff={abs(s3-s1)*100:.1f}bps')
-
-print()
-print('  Longstaff par curve at synthetic tenors:')
-for t_yr in [1.5, 4.0, 8.0, 15.0, 25.0]:
-    s = spl.par_rate(t_yr) * 100
-    print(f'    S({t_yr:4.1f}Y) = {s:.4f}%')
-```
-
-**Expected output (approximate):**
-```
-Sep 30 2024 — Transitional Curve
---------------------------------------------------
-  Spot rates — B1 vs B3:
-    3Mo: B1=4.5828%  B3=4.5828%  diff=0.0bps
-    1Yr: B1=4.0373%  B3=4.0371%  diff=0.0bps
-    2Yr: B1=3.6228%  B3=3.6233%  diff=0.1bps
-    5Yr: B1=3.5501%  B3=3.5514%  diff=0.1bps
-   10Yr: B1=3.7967%  B3=3.8002%  diff=0.4bps
-   20Yr: B1=4.3208%  B3=4.3165%  diff=0.4bps
-   30Yr: B1=4.1758%  B3=4.1670%  diff=0.9bps
-
-  Longstaff par curve at synthetic tenors:
-    S( 1.5Y) = 3.8526%
-    S( 4.0Y) = 3.5650%
-    S( 8.0Y) = 3.7078%
-    S(15.0Y) = 3.9724%
-    S(25.0Y) = 4.1526%
-```
-
-Note: B1 and B3 spot rates agree to < 1 bps at all tenors — the smoothness
-improvement of B3 over B1 shows in the forward curve but is nearly invisible
-in spot rates, as expected from the averaging effect of integration.
-
----
-
-### Example 3: December 31, 2024 — Bear Steepening
-
-```python
-# Dec 31 2024 — Fed cut 100bps total in H2 2024 (5.25% → 4.25-4.50%)
-# Short end fell sharply; long end rose on fiscal/inflation concerns
-# 30Y rose above 4.80% despite Fed cutting — classic bear steepener
-par_dec2024 = {
-    '1Mo': 4.38, '1.5Mo': 4.36, '2Mo': 4.33, '3Mo': 4.32, '4Mo': 4.30, '6Mo': 4.27,
-    '1Yr': 4.17, '2Yr': 4.24, '3Yr': 4.27, '5Yr': 4.38, '7Yr': 4.48,
-    '10Yr': 4.57, '20Yr': 4.87, '30Yr': 4.83,
-}
-r0 = 0.0430   # SOFR post December cut
-
-results_dec24 = run_pipeline(par_dec2024, r0=r0, verbose=False)
-
-b1   = results_dec24['b1']
-unif = results_dec24['uniform']
-
-# Extract the PCA-ready forward vector
-fwds = np.array([unif.forward_params[t]['f'] * 100
-                 for t in unif.tenors])
-
-print('Dec 31 2024 — Bear Steepening')
-print('-' * 50)
-print(f'  Forward vector: {len(fwds)} elements')
-print(f'  Range:          {fwds.min():.4f}% — {fwds.max():.4f}%')
-print(f'  Mean:           {fwds.mean():.4f}%')
-print(f'  Std dev:        {fwds.std():.4f}%')
-print()
-print('  Key spots (B1):')
-for t in ['3Mo', '2Yr', '5Yr', '10Yr', '30Yr']:
-    print(f'    {t:>5}: {b1.spot_rates[t]*100:.4f}%')
-print()
-
-# Compare B1 vs B3 at long end — most difference here
-print('  Long-end spot comparison:')
-for t in ['10Yr', '20Yr', '30Yr']:
-    s1 = b1.spot_rates[t]*100
-    s3 = results_dec24['b3'].spot_rates[t]*100
-    print(f'    {t}: B1={s1:.4f}%  B3={s3:.4f}%  diff={abs(s3-s1)*100:.1f}bps')
-```
-
-**Expected output (approximate):**
-```
-Dec 31 2024 — Bear Steepening
---------------------------------------------------
-  Forward vector: 360 elements
-  Range:          4.0077% — 5.6074%
-  Mean:           4.8300%
-  Std dev:        0.4270%
-
-  Key spots (B1):
-    3Mo: 4.3121%
-    2Yr: 4.2601%
-    5Yr: 4.4004%
-   10Yr: 4.5912%
-   30Yr: 4.9225%
-
-  Long-end spot comparison:
-    10Yr: B1=4.5912%  B3=4.5949%  diff=0.4bps
-    20Yr: B1=4.9697%  B3=4.9652%  diff=0.4bps
-    30Yr: B1=4.9225%  B3=4.9137%  diff=0.9bps
-```
-
-### Comparing All Three Dates
-
-```python
-# Multi-date comparison: spot rates across the rate cycle
-dates = {
-    'Jun-24': results_jun24['b1'],
-    'Sep-24': results_sep24['b1'],
-    'Dec-24': results_dec24['b1'],
-}
-
-print(f"\n{'Tenor':>6}", end='')
-for name in dates:
-    print(f"  {name:>8}", end='')
-print()
-print('-' * 36)
-
-for t in ['3Mo', '1Yr', '2Yr', '5Yr', '10Yr', '20Yr', '30Yr']:
-    print(f'{t:>6}', end='')
-    for name, res in dates.items():
-        print(f"  {res.spot_rates[t]*100:8.4f}", end='')
-    print()
-```
-
-**Expected output:**
-```
- Tenor    Jun-24    Sep-24    Dec-24
-------------------------------------
-   3Mo    5.3888    4.5828    4.3121
-   1Yr    4.9893    4.0373    4.1640
-   2Yr    4.5989    3.6228    4.2601
-   5Yr    4.1726    3.5501    4.4004
-  10Yr    4.3505    3.7967    4.5912
-  20Yr    4.8408    4.3208    4.9697
-  30Yr    4.5696    4.1758    4.9225
-```
-
-This table captures the full rate cycle in three snapshots: deep inversion
-(Jun-24), beginning of normalization (Sep-24), and bear steepening with
-renewed long-end pressure (Dec-24).
-
----
-
-## 9. Choosing a Method
-
-### Decision Guide
+## 7. Choosing a Method
 
 ```
 What do you need?
 │
 ├── Pricing / hedging at CMT tenors (DV01, swap PV)
-│   └── Bootstrap 1  (fastest, industry standard)
+│   └── Scheme 1  (fastest, discontinuous forward doesn't matter)
 │
-├── Continuous forward curve for model calibration
-│   ├── Hull-White, BDT, or similar short-rate model?
-│   │   └── Bootstrap 2 or Bootstrap 3
-│   └── Need C² spot rates (variance curve, etc.)?
-│       └── Bootstrap 3
+├── Continuous forward curve for visualization or short-rate-model calibration?
+│   ├── Need C² spot rates, Monte Carlo, or PCA input?
+│   │   └── Scheme 3
+│   └── Otherwise
+│       └── Scheme 2 (cheaper than Scheme 3, still C⁰)
 │
-├── Par rate at a non-standard maturity (e.g. 8.5Y)?
-│   └── Longstaff's Hack directly
-│
-├── Uniform forward curve for PCA / functional analysis?
-│   └── Full pipeline: Longstaff → Bootstrap 1 on 1M grid
-│       (results['uniform'])
-│
-└── Consistency check or publication?
-    └── Bootstrap 3 (matches US Treasury methodology post-2021)
+└── PCA / tail-risk / functional analysis on forward rate changes?
+    └── Scheme 1 — src/vol_analysis.py is built specifically against Scheme 1's
+        piecewise-constant forwards (see §10). Scheme 2/3 files will load into
+        vol_analysis_app.py but produce incorrect results — the math there
+        assumes step-function forwards.
 ```
 
 ### Method Comparison Summary
 
-| Property | B1 | B2 | B3 | Longstaff | B1 Uniform |
-|----------|----|----|----|-----------|----|
-| CMT tenors used | 14 | 14 | 14 | 13† | 360 |
-| Forward continuity | ✗ | ✓ | ✓ | N/A | ≈✓ |
-| Forward smoothness | ✗ | ✗ | ✓ | N/A | ≈✓ |
-| Arbitrage-free everywhere | ✓ | ✓ | ✓ | ✗ | ✓ |
-| Closed-form solve | ✗ | ✗ | ✗ | ✓ | ✗ |
-| Relative speed | 1× | 1.2× | 3× | <0.1× | 1× |
-| PCA-ready output | ✗ | ✗ | ✗ | ✗ | ✓ |
-| Anchored to SOFR | ✗ | ✓ | ✓ | ✗ | ✓ |
-
-† Longstaff works in whole-month par rate space; 1.5Mo is not a whole-month
-  tenor on 30/360. The spline interpolates smoothly over the 1Mo–2Mo gap.
+| Property | Scheme 1 | Scheme 2 | Scheme 3 |
+|----------|----------|----------|----------|
+| Forward continuity | ✗ | ✓ (C⁰) | ✓ (C¹) |
+| Forward smoothness | ✗ | ✗ | ✓ |
+| Arbitrage-free at knots | ✓ | ✓ | ✓ |
+| Closed-form solve | ✗ (1D Brent) | ✗ (1D Brent) | ✗ (1D Brent, after dimension reduction) |
+| Anchored to `r0` | ✗ | ✓ | ✓ |
+| Used by `vol_analysis.py` | ✓ | ✗ | ✗ |
 
 ---
 
-## 10. API Reference
+## 8. API Reference
 
-### `run_pipeline(par_pct, r0=None, step_months=1, verbose=True)`
+All of the below are module-level members of `src/cmt_bootstrap.py`.
 
-Run all five stages and return results dictionary.
+### Constants
 
-**Parameters:**
-- `par_pct`: dict `{label: rate_percent}` — CMT par rates in percent
-- `r0`: float — short rate decimal (SOFR). If None, uses 1Mo par rate.
-- `step_months`: int — uniform grid spacing in months (default 1)
-- `verbose`: bool — print formatted summaries (default True)
+- `EXP_CAP = 700.0` — clamp bound used by `safe_exp()` to avoid `OverflowError`.
+- `SOFR_START = pd.Timestamp("2018-04-03")` — dates before this always fall back to EFFR.
 
-**Returns:** dict with keys `'b1'`, `'b2'`, `'b3'`, `'longstaff'`, `'uniform'`
+### Helper functions
+
+- **`safe_exp(x: float) -> float`** — `exp(x)`, clamped to `[0, inf]` outside `±EXP_CAP`.
+- **`pay_count(t_years: float, nu: int) -> int`** — number of coupon payments in `t_years` at frequency `nu`, using `round()` before `int()` for float safety.
+- **`parse_tenor_to_years(label: str) -> float`** — parses labels like `"1.5 Mo"`, `"10 Yr"`, `"6mo"`, `"30y"` into years.
+- **`find_header_row(ws, required_first="Date", max_scan_rows=250) -> int`** — locates the header row in an openpyxl worksheet.
+- **`read_cmt_rates_from_workbook(path, sheet_name="CMT Rates") -> (tenors, T, df, miny, maxy)`** — parses the `CMT Rates` sheet; auto-detects percent vs. decimal input per cell.
+- **`load_combined_short_rates(path) -> DataFrame[Date, Rate_dec, Source]`**
+- **`load_fed_funds_history(path) -> DataFrame[Date, Rate_dec, Source]`** — Source is always `"EFFR"`.
+- **`load_sofr_history_optional(path) -> DataFrame[Date, Rate_dec, Source]`** — empty DataFrame if the file doesn't exist; filters to dates ≥ `SOFR_START`.
+- **`build_r0_series(curve_dates, short_df) -> (r0: np.ndarray, source: np.ndarray)`** — for each date, uses the latest SOFR observation on/before that date if available and `date >= SOFR_START`, else falls back to the latest EFFR observation.
+- **`annuity_sum(discount_fn, Ti, nu) -> float`** — `(1/nu) * Σ discount_fn(k/nu)` for `k = 1..pay_count(Ti, nu)`.
+- **`par_rate(discount_fn, Ti, nu) -> float`** — `(1 - discount_fn(Ti)) / annuity_sum(...)`.
+- **`int_lin(a, b, t) -> float`** — `0.5*a*t² + b*t` (integral of a linear forward).
+- **`int_cubic(a, b, c, d, t) -> float`** — `a*t⁴/4 + b*t³/3 + c*t²/2 + d*t` (integral of a cubic forward).
+
+### Bootstrap functions and result dataclasses
+
+```python
+@dataclass
+class Scheme1Result:
+    f: np.ndarray            # (K,) constant forward per tenor interval
+    P: np.ndarray             # (K,) discount factor at each tenor
+    z: np.ndarray             # (K,) spot rate, continuous compounding
+    f_end: np.ndarray         # (K,) == f (kept for symmetry with Scheme 2/3)
+    used_mask: np.ndarray     # (K,) bool — which tenors had input data
+    warns: list[str]
+    discount_fn: Callable[[float], float]
+
+def bootstrap_scheme1(S, T, nu, f_max=1.0, tol=1e-14) -> Scheme1Result: ...
+```
+
+```python
+@dataclass
+class Scheme2Result:
+    a: np.ndarray             # (K,) forward slope per interval
+    b: np.ndarray             # (K,) forward intercept per interval
+    P: np.ndarray
+    z: np.ndarray
+    f_end: np.ndarray         # forward value at each interval's own endpoint
+    used_mask: np.ndarray
+    warns: list[str]
+    discount_fn: Callable[[float], float]
+
+def bootstrap_scheme2(S, T, r0, nu, a_max=50.0, tol=1e-14) -> Scheme2Result: ...
+```
+
+```python
+@dataclass
+class Scheme3Result:
+    a3: np.ndarray            # (K,) cubic coefficients
+    b3: np.ndarray
+    c3: np.ndarray
+    d3: np.ndarray
+    c_target_next: np.ndarray # (K,) Fritsch-Carlson slope target used at each knot
+    P: np.ndarray
+    z: np.ndarray
+    f_end: np.ndarray
+    used_mask: np.ndarray
+    warns: list[str]
+    discount_fn: Callable[[float], float]
+
+def bootstrap_scheme3(S, T, r0, nu, a_max=200.0, tol=1e-13) -> Scheme3Result: ...
+```
+
+All three take `S` (par rates, decimal, `NaN` for missing) and `T` (tenor years)
+as parallel 1D arrays of the same length; Schemes 2 and 3 additionally require
+`r0` (the short-rate anchor for that date).
+
+### I/O
+
+- **`save_panel_npz(out_path, payload: dict) -> None`** — wraps `np.savez_compressed`, boxing plain strings/string-lists as `dtype=object` arrays so `np.load(..., allow_pickle=True)` round-trips them.
+- **`write_excel(out_xlsx, tenors, dates, par_in, P_T, z_T, f_end, par_impl, err_bp, maxabs, rms, method, nu, r0, r0_src, params) -> None`** — writes one sheet per array (Par Rates, Discount Factors, Spot Rates, Forward @ TenorEnd, Par Rates Implied, RoundTrip Error, one sheet per scheme parameter, Short Rate Anchor, and a README sheet).
+
+### NPZ Panel Schema
+
+Every array below (except the scalar/metadata ones) is shaped `(N_dates, 14_tenors)`
+unless noted otherwise:
+
+| Key | Meaning |
+|-----|---------|
+| `schema_version`, `generator`, `created_utc`, `method`, `nu`, `compounding` | metadata |
+| `dates` | `(N,)` `datetime64[D]` |
+| `tenor_labels` | `(14,)` strings, e.g. `'1Mo'` |
+| `tenor_years` | `(14,)` float |
+| `par_rates_input` | input par rates (decimal), `NaN` where missing |
+| `r0`, `r0_source` | short-rate anchor and its source (`'SOFR'`/`'EFFR'`/`'MISSING'`) per date |
+| `discount_factors_T`, `spot_rates_cc_T`, `forward_endpoint_T` | bootstrap outputs |
+| `par_rates_implied`, `par_rate_err_bp`, `par_rate_err_maxabs_bp`, `par_rate_err_rms_bp` | round-trip validation |
+| `status_code`, `log_messages` | `0`=clean, `1`=warnings (see `log_messages`), `2`=failed for that date |
+| `tenor_used_mask` | which tenors had input data, per date |
+| `s1_f` *(Scheme 1 only)* | constant forward per tenor |
+| `s2_a`, `s2_b` *(Scheme 2 only)* | linear forward coefficients |
+| `s3_a`, `s3_b`, `s3_c`, `s3_d`, `s3_c_target_next` *(Scheme 3 only)* | cubic forward coefficients |
+
+### CLI (`main()`)
+
+```
+python src/cmt_bootstrap.py
+    --workbook PATH               (required)
+    --scheme {1,2,3}               (required)
+    --nu INT                       (default: 24)
+    --short-rate-combined PATH     (default: data/short_rates/short_rate_combined.csv)
+    --fed-funds-csv PATH           (default: data/short_rates/fed_funds_1954_2018.csv)
+    --sofr-csv PATH                (default: data/short_rates/sofr_2018_present.csv)
+    --out-npz PATH                 (default: <workbook>_curves_S<scheme>_<miny>-<maxy>.npz)
+    --write-excel                  (flag)
+    --out-xlsx PATH                (default: <workbook>_curves_S<scheme>_<miny>-<maxy>.xlsx)
+```
+
+`scripts/run_bootstrap.py` wraps this with a smaller flag set
+(`--scheme`, `--write-excel`, `--nu`, `--workbook`, the last defaulting to
+`Treasury_CMT_Data_Tool.xlsx`) and shells out to the command above.
 
 ---
 
-### `CurveResult` — returned by all bootstrap stages
+## 9. Design Notes & Implementation Lessons
 
-**Attributes:**
-- `.tenors`: list of tenor labels in maturity order
-- `.maturities`: dict `{label: T_i in years (30/360)}`
-- `.par_rates`: dict `{label: S(T_i) in decimal}`
-- `.discount_factors`: dict `{label: P(0,T_i)}`
-- `.annuity_factors`: dict `{label: Ann₀(0,T_i)}`
-- `.spot_rates`: dict `{label: R(T_i) continuous, decimal}`
-- `.forward_params`: dict `{label: {polynomial coefficients}}`
+Non-obvious implementation decisions — the gap between textbook theory and working code.
 
-**Methods:**
-- `.forward_at(t)` → float: instantaneous forward f(t) for any t
-- `.forward_curve(n=500)` → (t_array, f_array): dense curve for plotting
-- `.roundtrip_bps()` → dict: par → spot → par error in basis points
-- `.print_summary()`: formatted table output
-
----
-
-### `LongstaffSpline` — returned by `LongstaffHack.fit()`
-
-**Methods:**
-- `.par_rate(T)` → float: S(T) in decimal for any T ∈ [T_min, T_max]
-- `.uniform_grid(step_months=1, T_max_yr=30.0)` → dict `{label: pct}`: uniform par grid
-- `.print_knot_check()`: verify exact knot interpolation
-
----
-
-### `Bootstrap1(nu=12, maturities=None)` / `Bootstrap2` / `Bootstrap3`
-
-All take optional `nu` (payment frequency) and `maturities` dict.
-
-**Method:** `.run(par_pct, r0=None)` → `CurveResult`
-
-`Bootstrap2` also provides: `.slopes(par_pct, r0=None)` → dict of linear slopes (used internally by Bootstrap 3)
-
----
-
-### `UniformGridPipeline(nu=12)`
-
-**Method:** `.run(par_pct, r0=None, step_months=1)` → `(LongstaffSpline, CurveResult)`
-
----
-
-## 11. Design Notes & Implementation Lessons
-
-This section documents non-obvious implementation decisions — the gap between
-textbook theory and working code.
-
-### 10.1 The Payment Count Fix — and Why ν = 24
-
-The single most important implementation detail:
+### 9.1 The Payment Count Fix — and Why ν = 24
 
 ```python
 # WRONG — causes systematic errors at 1.5Mo and other fractional tenors
 n = int(nu * tau)          # int(24 * 0.5/12) = int(0.9999...) = 0
 
-# CORRECT — floating-point safe
-n = int(round(nu * tau))   # int(round(0.9999...)) = 1
+# CORRECT (what pay_count() actually does)
+n = int(round(nu * tau + 1e-9))   # round(0.9999...) = 1
 ```
 
-The choice ν = 24 (payments every 15 days) is deliberate. With ν = 12
-(monthly), the 1.5Mo interval has ν·τ = 12 × (0.5/12) = 0.5 — exactly
-halfway between integers. `round(0.5)` is implementation-defined in Python
-(banker's rounding gives 0), making the result machine-dependent and wrong
-either way. ν = 24 maps every CMT interval to a clean integer:
+`nu = 24` (payments every 15 days) is deliberate. With `nu = 12` (monthly), the
+1.5Mo interval gives `nu*tau = 12 * (0.5/12) = 0.5` — exactly on the rounding
+boundary, which is implementation-defined (banker's rounding) and therefore
+fragile. `nu = 24` maps every CMT interval to a clean, unambiguous integer.
 
-    τ = 0.5/12  → ν·τ = 24 × 0.04166... = 0.9999... → round → 1  ✓
-    τ = 1/12    → ν·τ = 24 × 0.08333... = 1.9999... → round → 2  ✓
-    τ = 6/12    → ν·τ = 24 × 0.5000    = 12.0000   → round → 12 ✓
+### 9.2 30/360 and Exact Arithmetic
 
-### 10.2 30/360 and Exact Arithmetic
+`parse_tenor_to_years()` computes `T = months/12` as exact float division rather
+than day-counting actual/365, so every interval width is an exact multiple of
+`1/12` — eliminating floating-point ambiguity in the tenor grid itself.
 
-Using `T = months/12` (exact integer division) rather than day-counted actual/365
-eliminates all floating-point ambiguity in tenor arithmetic. Every interval length
-τ_i = T_i − T_{i-1} is an exact multiple of 1/12.
+### 9.3 Scheme 3 — Dimension Reduction
 
-### 10.3 Bootstrap 2 on Dense Grids — Resonance Instability
+The naive formulation of Scheme 3 is a 2D nonlinear root-find (`a_i` and `b_i`
+both unknown), which is fragile — the 10Y→20Y interval in particular can produce
+extreme parameter values. Because the slope constraint
 
-Bootstrap 2's slope-chaining (`b_i = a_{i-1}·τ_{i-1} + b_{i-1}`) is designed for
-sparse grids where the coupling provides meaningful smoothness. On a 360-point grid
-with τ = 1/12, the chain length is 26× longer than on the 14-tenor CMT grid. Any
-solver imprecision compounds across all 360 intervals, producing a sawtooth
-oscillation of ±70%. The fix is not to increase tolerance but to use a method
-without chaining — Bootstrap 1.
+    3·a·dT² + 2·b·dT + c_i - c_next = 0
 
-### 10.4 Bootstrap 3 — Dimension Reduction
+is linear in `(a, b)`, `b_of_a(a)` eliminates `b` analytically, and the residual
+becomes a well-conditioned 1D function of `a` alone — solved by `brentq` with a
+scaled-bracket search (see §3.3). This is the actual `b_of_a` closure in
+`bootstrap_scheme3`.
 
-The original formulation of Bootstrap 3 uses a 2D nonlinear root-finding problem
-(both a_i and b_i as unknowns). This is fragile: 2D Newton methods require good
-initial guesses, and the 10Y→20Y interval (τ = 10 years) produces extreme parameter
-values with overflow risk.
+### 9.4 C² Is Impossible Without Sacrificing Monotonicity
 
-The key insight is that F2 (slope condition at right knot) is **linear** in (a,b),
-allowing exact elimination:
+Adding second-derivative continuity to Scheme 3 would need a fifth constraint on
+a four-parameter cubic — over-determined. The code's actual fallback path (see
+§3.3, "Numerical fallbacks") reflects this in practice: rather than force a C²
+solve that would need to drop monotonicity, difficult intervals fall back to a
+plain constant forward for that one interval, preserving continuity and
+arbitrage-freeness at the cost of local smoothness.
 
-    b(a) = [c_{i+1} − c_i − 3a·τ²] / (2τ)
+### 9.5 Robustness of Scheme 3's Bracket Search
 
-After substitution, f_i(τ) becomes **linear in a**, providing exact analytical
-Brent brackets. This reduces to a well-conditioned 1D problem with guaranteed
-convergence within the safe range |a| < 2000/τ⁴.
-
-### 10.5 Longstaff Closed-Form Formula
-
-The 2×2 linear system for Longstaff's (a_i, b_i) must be solved using the correct
-matrix inverse. The formula:
-
-    a_i = ( 2τ·rhs₁ − τ²·rhs₂) / (−τ⁴)
-    b_i = (−3τ²·rhs₁ + τ³·rhs₂) / (−τ⁴)
-
-is derived from Cramer's rule (or equivalently np.linalg.solve). An apparently
-simpler but **incorrect** formula `a_i = (−2·rhs₁ + τ·rhs₂)/τ⁴` produces knot
-errors of 5–22 bps. The correct formula produces errors < 10⁻¹⁰ bps. This is
-the kind of subtle sign error that only manifests numerically.
-
-### 10.6 C² is Impossible Without Sacrificing Monotonicity
-
-Adding C² continuity to Bootstrap 3 would require a fifth constraint on a
-four-parameter system, making it over-determined. The only resolution is to
-drop monotonicity. On the 10Y→20Y interval (τ = 10 years), condition number
-κ ∼ τ⁴ ∼ 10⁴ = 10,000 for the derivative constraints — an unconstrained cubic
-would produce wildly oscillating forward rates (observed range: −50% to +100%).
-Monotonicity is the correct substitute for C².
+The real code goes further than a single bracket-widening loop: it scales the
+initial bracket by interval width (`interval_scale = max(1.0, dT/0.15)`, since
+wide intervals — often from a missing tenor — need larger cubic coefficients),
+attempts asymmetric bracket repair if only one side of `residual()` overflows,
+and only falls back to the constant-forward solve described above if all of that
+fails. This is meaningfully more defensive than the simpler bracket-doubling used
+in Schemes 1 and 2, reflecting that the cubic residual is the most numerically
+fragile of the three.
 
 ---
 
-## 12. Downstream Applications
+## 10. Downstream Applications
 
-This module is designed as a data provider for analytical applications. The
-primary outputs are:
+### PCA / Tail-Risk Analysis (`src/vol_analysis.py`)
 
-### For PCA / Functional Analysis
-
-```python
-results = run_pipeline(par_rates, r0=r0, verbose=False)
-uniform = results['uniform']
-
-# 360 × 1 forward rate vector (one observation)
-fwd_vector = np.array([uniform.forward_params[t]['f'] * 100
-                        for t in uniform.tenors])
-
-# Build a panel: run for many dates to get T × 360 matrix
-# rows = dates, columns = maturities (1Mo to 30Yr in 1M steps)
-# Then: np.cov(panel) → 360×360 covariance matrix
-#       np.linalg.eigh(cov) → eigenvalues, eigenvectors (PCA factors)
-```
-
-### For Nelson-Siegel Fitting
+This is real, shipped code — not a design sketch. `vol_analysis.py` consumes a
+**Scheme 1** NPZ panel directly:
 
 ```python
-# NSS fits to spot rates at standard tenors
-tenors_yr = [b1.maturities[t] for t in b1.tenors]
-spot_pct  = [b1.spot_rates[t] * 100 for t in b1.tenors]
-# Fit NSS: minimize ||R_NS(τ; β) − R(τ)||² over {β₀,β₁,β₂,β₃,λ₁,λ₂}
+from vol_analysis import load_vol_panel, weighted_pca, fit_both
+
+panel   = load_vol_panel('data/samples/Treasury_CMT_Data_Tool_curves_S1_1990-2026.npz')
+pca     = weighted_pca(panel)     # span-weighted PCA on daily Δf
+fits    = fit_both(panel, pca)    # k=5 and k=14 F(k,ν) tail fits
+
+print(pca.var_share[:5])          # variance explained by PC1..PC5
+print(fits.k5.nu, fits.k14.nu)    # fitted degrees of freedom
 ```
 
-### For Hull-White Calibration
+Why Scheme 1 specifically: `weighted_pca` builds a span-weighted covariance
+(`Δf` scaled by `√ΔT_i` per tenor) directly from `s1_f`'s daily first differences,
+after `fill_s1_gaps()` repairs missing-tenor gaps using the piecewise-constant
+structure's own exactness property (an absent span's constant forward equals its
+right-hand neighbor's, since the bootstrap merged them). That gap-fill logic is
+specific to Scheme 1's step-function forwards; it isn't valid for Scheme 2/3
+files, which is why `scripts/vol_analysis_app.py` requires a Scheme 1 panel (see
+the app's own README section for the corresponding user-facing warning).
+
+### Continuous Curve Reconstruction (`scripts/curve_reconstruction.py`)
+
+Rather than an object with a `.forward_at(t)` method, reconstruction here is a
+set of functions operating directly on one date-row of an NPZ panel:
 
 ```python
-# Hull-White requires f(t) and df/dt at market knot points
-# Bootstrap 3 provides C¹ forwards (f is differentiable)
-from bootstrap_pipeline import Bootstrap3
-b3 = Bootstrap3().run(par_rates, r0=r0)
+from curve_reconstruction import reconstruct_curves
 
-# theta(t) = df/dt + f(t)^2 + kappa*f(t)  (approximate for small kappa)
-# Use b3.forward_at(t) for f(t); numerical differentiation for df/dt
-import numpy as np
-dt = 1e-5
-def theta(t, kappa=0.05):
-    f   = b3.forward_at(t)
-    dft = (b3.forward_at(t+dt) - b3.forward_at(t-dt)) / (2*dt)
-    return dft + f**2 + kappa*f
+# `data` is whatever np.load(npz_path, allow_pickle=True) returns, keyed the
+# same as the schema in §8; date_idx indexes into its (N, 14) arrays.
+curves = reconstruct_curves(data, date_idx=0, num_points=1000)
+t_dense, f_dense, P_dense, z_dense = (
+    curves['t_dense'], curves['forward_dense'],
+    curves['discount_dense'], curves['spot_dense'],
+)
 ```
 
-### For Swap Pricing / DV01
+Internally this dispatches on `data['method']` to
+`reconstruct_scheme1_forward` / `reconstruct_scheme2_forward` /
+`reconstruct_scheme3_forward`, then `integrate_forward_to_discount` and
+`compute_spot_from_discount` — this is exactly what
+`scripts/yield_curve_app.py` calls to draw the continuous curves in the
+Streamlit app (see [`docs/CURVE_RECONSTRUCTION.md`](CURVE_RECONSTRUCTION.md)
+for the underlying math).
+
+### Swap Pricing / DV01
+
+Scheme 1 is sufficient for exact pricing at CMT tenors, since only the integrated
+discount factor matters:
 
 ```python
-# Bootstrap 1 is sufficient for exact swap pricing at CMT tenors
-b1 = results['b1']
-
-# Price a 5Y par swap (approximate, ignoring bid-offer)
-P_5y  = b1.discount_factors['5Yr']
-Ann_5y = b1.annuity_factors['5Yr']
-S_5y  = b1.par_rates['5Yr']
-print(f'5Y par swap rate: {S_5y*100:.4f}%')
-
-# DV01 (approx): bump each par rate +1bp, rerun, compare annuity factor
+b1 = bootstrap_scheme1(S, T, nu=24)
+i5y = tenor_labels.index('5Yr')
+P_5y, z_5y = b1.P[i5y], b1.z[i5y]
 ```
+
+For DV01, bump one entry of `S` by 1bp, re-run `bootstrap_scheme1`, and compare
+the resulting discount factor or par rate.
 
 ---
 
-## 13. References
+## 11. References
 
 **Bootstrapping methodology:**
 
@@ -1601,22 +721,17 @@ Hagan, P. S. & West, G. (2008). "Methods for Constructing a Yield Curve."
 Fritsch, F. N. & Carlson, R. E. (1980). "Monotone Piecewise Cubic Interpolation."
 *SIAM Journal on Numerical Analysis*, 17(2), 238–246.
 
-**Longstaff's Hack:**
-
-Longstaff, F. A. — practitioner methodology, direct communication.
-The approach fits a monotone cubic spline directly to par rates rather than
-to zero or forward rates, exploiting the stability hierarchy:
-mortgage rates > par rates > zero rates > forward rates.
-Arbitrage-free at knot points only; between tenors the curve is smooth,
-monotone, and "reasonable" but not exactly arbitrage-free.
-
 **US Treasury methodology:**
 
 The US Treasury estimates its par yield curve using a monotone convex spline
-method (equivalent to Bootstrap 3 in spirit). Published daily at:
+method (equivalent to Scheme 3 in spirit). Published daily at:
 https://home.treasury.gov/resource-center/data-chart-center/interest-rates/
 
 ---
 
-*Bootstrap Pipeline v2.1 — February 2026*
-*Day count: 30/360 | Payment frequency: bi-monthly (ν=24) | Precision: < 10⁻⁸ bps*
+## Code Reference
+
+- [`src/cmt_bootstrap.py`](../src/cmt_bootstrap.py) — everything in this guide
+- [`src/vol_analysis.py`](../src/vol_analysis.py) — PCA / tail-risk on Scheme 1 output
+- [`scripts/curve_reconstruction.py`](../scripts/curve_reconstruction.py) — continuous curve evaluation
+- [`scripts/run_bootstrap.py`](../scripts/run_bootstrap.py) — CLI convenience wrapper
