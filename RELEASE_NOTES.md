@@ -1,3 +1,42 @@
+# Release Notes - v1.2.0
+
+## Volatility Analysis
+
+**Release Date:** 2026-07-19
+**Tag:** v1.2.0
+
+---
+
+### 🎉 New: Volatility Analysis App
+
+Span-weighted PCA and t_ν tail-distribution fitting on S1 instantaneous forward rate changes.
+
+**New Files:**
+- `src/vol_analysis.py` - span-weighted PCA, corrected F(k,ν) tail fit (C vs Σ inflation factor c=(ν-2)/ν), five-anchor linear interpolation, seven ALCO preset scenarios
+- `scripts/vol_analysis_app.py` - two-tab Streamlit app (PCA scree/loadings, tail-distribution QQ plots + ALCO scenario generator)
+
+**Run:**
+```bash
+python -m streamlit run scripts/vol_analysis_app.py
+```
+
+**Tab 1 — PCA:** Waterfall scree plot of variance explained, interactive PC loadings chart, variance table with a 90/95/99% threshold selector.
+
+**Tab 2 — Tail Distribution & ALCO Scenarios:** Corrected F(k, ν) QQ plots for k=5 (reduced-rank) and k=14 (full-rank) fits; seven ALCO stress presets (parallel, bear/bull steepen/flatten, bell, bowl) calibrated to the same d² as a parallel +100bp/quarter shock; severity score = P(D² ≤ d²_scenario).
+
+**Verified:** k=5 ν* (QQ) ≈ 4.91, k=14 ν* (MLE) ≈ 3.11, both QQ slopes ≈ 1.000; all 7 presets populate anchors correctly.
+
+**Dependencies:** `scipy>=1.9.0` (already present, no bump needed).
+
+### ⚠️ Breaking Changes
+
+None.
+
+**Full Changelog:** https://github.com/NaraSiva90/CMTRateBootstrap/compare/v1.1.0...v1.2.0
+
+---
+---
+
 # Release Notes - v1.1.0
 
 ## Interactive Visualization with Mathematical Curve Reconstruction
@@ -22,7 +61,7 @@ Explore bootstrapped yield curves with a professional web interface.
 
 **Run:**
 ```bash
-python -m streamlit run scripts/yield_curve_app_v2.py
+python -m streamlit run scripts/yield_curve_app.py
 ```
 
 ### Mathematically Correct Curve Reconstruction
@@ -61,15 +100,12 @@ Curves are reconstructed by:
 ## 📦 New Files
 
 ### Visualization Tools
-- `scripts/yield_curve_app_v2.py` - Main Streamlit app
+- `scripts/yield_curve_app.py` - Main Streamlit app
 - `scripts/curve_reconstruction.py` - Mathematical reconstruction engine
-- `scripts/yield_curve_viz.py` - Standalone HTML generator
-- `scripts/yield_curve_viz.ipynb` - Jupyter notebook version
 
 ### Documentation
 - `docs/VISUALIZATION_GUIDE.md` - Complete usage guide
 - `docs/CURVE_RECONSTRUCTION.md` - Mathematical derivation and theory
-- `GITHUB_UPDATE_CHECKLIST.md` - Update workflow
 
 ---
 
@@ -153,17 +189,15 @@ None. This is a pure feature addition.
 
 ## 🔜 Future Roadmap
 
-### v1.2.0 (Planned)
+### v1.3.0 (Ideas)
 - Multi-date overlay comparison
 - 3D surface plots (Date × Maturity × Rate)
 - Animated GIFs of curve evolution
-- Dash web deployment template
-
-### v1.3.0 (Ideas)
 - Real-time Treasury API integration
-- Scenario analysis tools
 - Spread analysis (Treasury vs Swap)
 - Option-adjusted spreads
+
+See [v1.2.0](#release-notes---v120) below for what actually shipped next — a volatility/tail-risk module rather than the visualization ideas originally listed here.
 
 ---
 
@@ -204,7 +238,7 @@ No migration needed. Simply:
 
 1. Pull latest code
 2. Install new dependencies: `pip install plotly streamlit`
-3. Run: `python -m streamlit run scripts/yield_curve_app_v2.py`
+3. Run: `python -m streamlit run scripts/yield_curve_app.py`
 
 Existing bootstrap scripts work unchanged.
 
@@ -222,4 +256,4 @@ Open an issue on GitHub or reach out via LinkedIn.
 
 ---
 
-**Full Changelog:** https://github.com/yourusername/cmt-yield-curve-bootstrap/compare/v1.0.0...v1.1.0
+**Full Changelog:** https://github.com/NaraSiva90/CMTRateBootstrap/compare/v1.0.0...v1.1.0

@@ -4,8 +4,8 @@
 
 ```bash
 # Clone repository
-git clone https://github.com/YOUR-USERNAME/cmt-yield-curve-bootstrap.git
-cd cmt-yield-curve-bootstrap
+git clone https://github.com/NaraSiva90/CMTRateBootstrap.git
+cd CMTRateBootstrap
 
 # Install dependencies
 pip install -r requirements.txt
@@ -149,7 +149,7 @@ pip install --upgrade numpy
 ls data/samples/
 
 # If empty, download from GitHub release or run bootstrap
-python src/cmt_bootstrap.py --scheme 2 --write-npz
+python scripts/run_bootstrap.py --scheme 2
 ```
 
 ---
@@ -174,8 +174,8 @@ For contributing:
 
 ```bash
 # Clone repository
-git clone https://github.com/YOUR-USERNAME/cmt-yield-curve-bootstrap.git
-cd cmt-yield-curve-bootstrap
+git clone https://github.com/NaraSiva90/CMTRateBootstrap.git
+cd CMTRateBootstrap
 
 # Create development environment
 python -m venv venv

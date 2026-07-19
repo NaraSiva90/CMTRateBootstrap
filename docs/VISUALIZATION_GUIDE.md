@@ -9,7 +9,7 @@ Interactive exploration of Treasury yield curves using Plotly and Streamlit.
 pip install plotly streamlit
 
 # Run the app
-python -m streamlit run scripts/yield_curve_app_v2.py
+python -m streamlit run scripts/yield_curve_app.py
 ```
 
 The app will open in your browser at `http://localhost:8501`
@@ -154,14 +154,14 @@ The `curve_reconstruction.py` module:
 
 **Solution:**
 ```bash
-python -m streamlit run scripts/yield_curve_app_v2.py
+python -m streamlit run scripts/yield_curve_app.py
 ```
 
 ### Curves look wrong
 
 **Problem:** Curves show as straight lines
 
-**Solution:** Ensure you're using `yield_curve_app_v2.py` (not the old version)
+**Solution:** This means `curve_reconstruction.py` isn't being used to reconstruct the continuous curve — check that `scripts/yield_curve_app.py` is calling it rather than plotting raw tenor points.
 
 ### Missing dates
 
@@ -197,7 +197,7 @@ curves = reconstruct_curves(data, date_idx, num_points=500)
 
 ### Customize Colors
 
-Edit `yield_curve_app_v2.py`:
+Edit `yield_curve_app.py`:
 
 ```python
 # Change spot rate color from purple to blue

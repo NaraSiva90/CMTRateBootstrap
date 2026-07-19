@@ -366,4 +366,4 @@ Directly inverts par rates to discount factors, then reconstructs.
 
 - `curve_reconstruction.py`: Implementation
 - `cmt_bootstrap.py`: Bootstrap algorithms that generate parameters
-- `yield_curve_app_v2.py`: Visualization using reconstruction
+- `yield_curve_app.py`: Visualization using reconstruction

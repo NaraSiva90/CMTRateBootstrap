@@ -109,7 +109,7 @@ Unlike the yield curve app, this app does **not** auto-detect sample files — p
 
 **⚠️ Requires an S1 (piecewise-constant forward) bootstrap file specifically** — the PCA and tail-fit math is derived for S1's step-function forwards; S2/S3 files will load but produce incorrect results.
 
-**Ready-to-use sample:** [`data/samples/Treasury_CMT_Data_Tool_curves_S1_2022-2026.npz`](data/samples/Treasury_CMT_Data_Tool_curves_S1_2022-2026.npz) (Jan 2022 – Feb 2026, ships with the repo).
+**Ready-to-use sample:** [`data/samples/Treasury_CMT_Data_Tool_curves_S1_1990-2026.npz`](data/samples/Treasury_CMT_Data_Tool_curves_S1_1990-2026.npz) (Jan 1990 – Jul 2026, ships with the repo) — the full history gives the PCA and tail fits far more observations than the 2022-2026 sample.
 
 **To generate your own S1 file:**
 ```bash
@@ -134,6 +134,8 @@ cmt-yield-curve-bootstrap/
 ├── README.md                          # This file
 ├── LICENSE
 ├── requirements.txt                   # Python dependencies
+├── RELEASE_NOTES.md                   # Per-release changelog
+├── INSTALLATION_GUIDE.md              # Setup + troubleshooting
 ├── .gitignore
 │
 ├── src/
@@ -159,7 +161,10 @@ cmt-yield-curve-bootstrap/
 │
 └── docs/
     ├── USER_GUIDE.md                 # Detailed usage guide
-    └── BOOTSTRAP_GUIDE.md            # Bootstrap methodology
+    ├── BOOTSTRAP_GUIDE.md            # Bootstrap methodology
+    ├── VISUALIZATION_GUIDE.md        # Yield curve app usage guide
+    ├── CURVE_RECONSTRUCTION.md       # Curve reconstruction math
+    └── images/                       # Screenshots used in this README
 ```
 
 V1.1 Directory Structure:

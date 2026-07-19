@@ -11,6 +11,7 @@ Save as: `par-yield-curve-rates-1990-2023.csv`
 
 - `short_rates/fed_funds_1954_2018.csv` - FRED DFF series
 - `short_rates/sofr_manual.csv` - SOFR baseline
+- `samples/` - Pre-bootstrapped NPZ files ready to use with the apps (see [samples/README.md](samples/README.md))
 
 ## Generated Files (Not in Git)
 
