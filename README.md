@@ -93,6 +93,23 @@ Our approach **reconstructs continuous curves** from bootstrap parameters:
 
 See [Visualization Guide](docs/VISUALIZATION_GUIDE.md) for complete documentation.
 
+## Volatility Analysis App
+
+Span-weighted PCA and tail-distribution fitting on S1 forward rate changes.
+
+```bash
+python -m streamlit run scripts/vol_analysis_app.py
+```
+
+**Tab 1 — PCA:** Waterfall scree plot of variance explained, interactive PC loadings chart, and variance table. Variance threshold (90/95/99%) selector highlights the minimum PC count needed.
+
+**Tab 2 — Tail Distribution & ALCO Scenarios:**
+- Corrected F(k, ν) QQ plots for both k=5 (reduced-rank) and k=14 (full-rank) fits, with the C vs Σ inflation factor c=(ν-2)/ν applied throughout.
+- Seven preset ALCO stress scenarios (parallel, bear/bull steepen/flatten, bell, bowl) all calibrated to the same d² as a parallel +100 bp/quarter shock. Five anchor sliders (3Mo/5Yr/10Yr/20Yr/30Yr) control custom scenarios; the remaining nine tenors are linearly interpolated and shown in gray.
+- Severity score = P(D² ≤ d²_scenario) under the fitted distribution.
+
+Requires: an S1 bootstrap `.npz` panel file produced by `run_bootstrap.py`.
+
 
 ## Project Structure
 
