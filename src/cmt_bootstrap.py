@@ -192,6 +192,32 @@ def build_r0_series(curve_dates: pd.Series, short_df: pd.DataFrame) -> Tuple[np.
             src[i] = "MISSING"
     return r0, src
 
+def check_short_rate_staleness(curve_dates: pd.Series, short_df: pd.DataFrame, max_gap_days: int = 5) -> str | None:
+    """Warn when the newest curve date has outrun the SOFR history feeding r0.
+
+    build_r0_series() silently reuses the latest available SOFR observation
+    on/before each curve date, so a stale short_rate_combined.csv fails quietly
+    rather than raising an error. This catches that case explicitly.
+    """
+    curve_dates = pd.to_datetime(curve_dates)
+    max_curve_date = curve_dates.max()
+    if max_curve_date < SOFR_START:
+        return None
+
+    sofr_dates = short_df.loc[short_df["Source"].astype(str).str.upper() == "SOFR", "Date"]
+    if len(sofr_dates) == 0:
+        return (f"No SOFR observations found, but curve data runs through {max_curve_date.date()}. "
+                f"Run scripts/update_short_rates.py to populate data/short_rates/short_rate_combined.csv.")
+
+    max_sofr_date = pd.to_datetime(sofr_dates).max()
+    gap = (max_curve_date - max_sofr_date).days
+    if gap > max_gap_days:
+        return (f"Short-rate history is stale: latest SOFR observation is {max_sofr_date.date()}, "
+                f"but curve data runs through {max_curve_date.date()} ({gap} days behind). "
+                f"r0 for the newest dates will silently reuse the {max_sofr_date.date()} rate. "
+                f"Run scripts/update_short_rates.py to refresh data/short_rates/short_rate_combined.csv.")
+    return None
+
 def annuity_sum(discount_fn: Callable[[float], float], Ti: float, nu: int) -> float:
     m = pay_count(Ti, nu)
     if m <= 0: return 0.0
@@ -704,6 +730,9 @@ def main():
                     help="Fallback if combined file missing")
     ap.add_argument("--sofr-csv", default="data/short_rates/sofr_2018_present.csv",
                     help="Fallback if combined file missing")
+    ap.add_argument("--short-rate-staleness-days", type=int, default=5,
+                    help="Warn if the newest curve date is more than this many days ahead "
+                         "of the latest SOFR observation (default: 5)")
 
     ap.add_argument("--out-npz", default=None)
     ap.add_argument("--write-excel", action="store_true")
@@ -719,6 +748,12 @@ def main():
         dff = load_fed_funds_history(args.fed_funds_csv)
         sofr = load_sofr_history_optional(args.sofr_csv)
         short_df = pd.concat([dff, sofr], ignore_index=True).sort_values("Date")
+
+    if args.scheme in (2, 3):
+        staleness_msg = check_short_rate_staleness(
+            df["Date"], short_df, max_gap_days=args.short_rate_staleness_days)
+        if staleness_msg:
+            print(f"WARNING: {staleness_msg}")
 
     r0, r0_src = build_r0_series(df["Date"], short_df)
 

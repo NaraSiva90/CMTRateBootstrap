@@ -360,16 +360,41 @@ If the date isn't in an existing panel yet, either re-run
 ### Workflow 2: Production (Automated Daily)
 
 **Use case:** Nightly job that keeps the panel current.
-**Architecture:** a scheduled task simply re-runs the existing CLI on the
-freshly-updated workbook — there's no separate "daily" code path to maintain.
+**Architecture:** a scheduled task refreshes both source inputs — Treasury CMT
+par rates *and* the SOFR/Fed-Funds short-rate history — then re-runs the
+existing bootstrap CLI. There's no separate "daily" code path to maintain
+beyond that chain.
 
 ```bash
-# 1. Pull the latest CMT rates into the workbook
-python scripts/update_treasury_cmt.py
+# All-in-one (recommended — this is what scripts/update_all_data.py wraps)
+python scripts/update_all_data.py --scheme 2
+```
 
-# 2. Re-run the bootstrap over the whole (now-extended) history
+which is equivalent to running the three steps explicitly:
+
+```bash
+# 1. Pull the latest CMT par rates into the workbook
+python scripts/update_treasury_cmt.py --start-year 2026 --end-year 2026
+
+# 2. Refresh the SOFR/Fed-Funds short-rate history (feeds r0 for Schemes 2/3)
+python scripts/update_short_rates.py
+
+# 3. Re-run the bootstrap over the whole (now-extended) history
 python scripts/run_bootstrap.py --scheme 2
 ```
+
+Step 2 is easy to miss because it doesn't touch the workbook at all — it only
+matters for Schemes 2/3, which anchor the short end of the curve to `r0`
+([§3.2](#32-scheme-2--piecewise-linear-forwards), [§3.3](#33-scheme-3--monotone-cubic-forwards)).
+An earlier, two-step version of this workflow ran only step 1 before
+bootstrapping, which let `r0` go stale silently: `build_r0_series()` just keeps
+reusing the latest available SOFR observation for every new curve date rather
+than erroring. `cmt_bootstrap.py` now prints an explicit `WARNING` when the
+newest curve date has outrun the SOFR history by more than
+`--short-rate-staleness-days` (default 5) — see [§8](#8-api-reference) — but
+running all three steps (or the wrapper) avoids hitting that warning in the
+first place. Fed Funds (1954–2018) itself never needs re-fetching; it's a
+closed historical range baked into `data/short_rates/fed_funds_1954_2018.csv`.
 
 Because `main()` reprocesses every date in the workbook each time, the output
 NPZ is always a complete, consistent panel — there's no incremental/append mode
@@ -377,12 +402,12 @@ to reason about.
 
 **Scheduling (cron, Linux/Mac):**
 ```bash
-0 17 * * 1-5 cd /path/to/CMTRateBootstrap && python scripts/update_treasury_cmt.py && python scripts/run_bootstrap.py --scheme 2 >> production.log 2>&1
+0 17 * * 1-5 cd /path/to/CMTRateBootstrap && python scripts/update_all_data.py --scheme 2 >> production.log 2>&1
 ```
 
 **Scheduling (Windows Task Scheduler):** Basic Task → Daily trigger → Action:
-`python.exe` with arguments pointing at the two scripts above in sequence (or a
-small `.bat`/`.ps1` that chains them).
+`python.exe` with arguments `scripts/update_all_data.py --scheme 2` (working
+directory set to the repo root).
 
 **When to use:** Keeping a live panel for risk systems or daily reporting.
 
@@ -473,6 +498,7 @@ All of the below are module-level members of `src/cmt_bootstrap.py`.
 - **`load_fed_funds_history(path) -> DataFrame[Date, Rate_dec, Source]`** — Source is always `"EFFR"`.
 - **`load_sofr_history_optional(path) -> DataFrame[Date, Rate_dec, Source]`** — empty DataFrame if the file doesn't exist; filters to dates ≥ `SOFR_START`.
 - **`build_r0_series(curve_dates, short_df) -> (r0: np.ndarray, source: np.ndarray)`** — for each date, uses the latest SOFR observation on/before that date if available and `date >= SOFR_START`, else falls back to the latest EFFR observation.
+- **`check_short_rate_staleness(curve_dates, short_df, max_gap_days=5) -> str | None`** — returns a warning message (or `None`) if the newest curve date has outrun the latest SOFR observation by more than `max_gap_days`; `main()` prints this as `WARNING: ...` for Schemes 2/3 before bootstrapping. Guards against `build_r0_series()`'s silent-reuse behavior above.
 - **`annuity_sum(discount_fn, Ti, nu) -> float`** — `(1/nu) * Σ discount_fn(k/nu)` for `k = 1..pay_count(Ti, nu)`.
 - **`par_rate(discount_fn, Ti, nu) -> float`** — `(1 - discount_fn(Ti)) / annuity_sum(...)`.
 - **`int_lin(a, b, t) -> float`** — `0.5*a*t² + b*t` (integral of a linear forward).
@@ -567,6 +593,7 @@ python src/cmt_bootstrap.py
     --short-rate-combined PATH     (default: data/short_rates/short_rate_combined.csv)
     --fed-funds-csv PATH           (default: data/short_rates/fed_funds_1954_2018.csv)
     --sofr-csv PATH                (default: data/short_rates/sofr_2018_present.csv)
+    --short-rate-staleness-days N  (default: 5; Schemes 2/3 only — see check_short_rate_staleness above)
     --out-npz PATH                 (default: <workbook>_curves_S<scheme>_<miny>-<maxy>.npz)
     --write-excel                  (flag)
     --out-xlsx PATH                (default: <workbook>_curves_S<scheme>_<miny>-<maxy>.xlsx)
@@ -735,3 +762,6 @@ https://home.treasury.gov/resource-center/data-chart-center/interest-rates/
 - [`src/vol_analysis.py`](../src/vol_analysis.py) — PCA / tail-risk on Scheme 1 output
 - [`scripts/curve_reconstruction.py`](../scripts/curve_reconstruction.py) — continuous curve evaluation
 - [`scripts/run_bootstrap.py`](../scripts/run_bootstrap.py) — CLI convenience wrapper
+- [`scripts/update_treasury_cmt.py`](../scripts/update_treasury_cmt.py) — fetches Treasury CMT par rates into the workbook
+- [`scripts/update_short_rates.py`](../scripts/update_short_rates.py) — fetches/combines the SOFR + Fed Funds history that feeds `r0`
+- [`scripts/update_all_data.py`](../scripts/update_all_data.py) — single entrypoint chaining the two fetchers above and the bootstrap (see Workflow 2)

@@ -1,3 +1,53 @@
+# Release Notes - Unreleased
+
+## Automated Short-Rate Refresh
+
+---
+
+### 🔧 Fixed: Short-Rate Anchor Going Stale in the Daily Workflow
+
+The previously-documented daily/production workflow only re-ran
+`update_treasury_cmt.py` before bootstrapping. That refreshes the Treasury CMT
+par rates, but not `data/short_rates/short_rate_combined.csv` — the SOFR/Fed
+Funds history that Schemes 2/3 anchor their short end (`r0`) to. Because
+`build_r0_series()` silently reuses the latest available SOFR observation for
+any newer curve date, a workflow that skipped `update_short_rates.py` would
+keep producing S2/S3 curves with a frozen, increasingly stale `r0` — with no
+error or warning.
+
+**New Files:**
+- `scripts/update_all_data.py` - single entrypoint chaining `update_treasury_cmt.py`,
+  `update_short_rates.py`, and `run_bootstrap.py`; reports each step's pass/fail
+  separately so one API outage doesn't mask another's success.
+
+**Changed:**
+- `src/cmt_bootstrap.py` - added `check_short_rate_staleness()`; `main()` now prints
+  `WARNING: ...` for Schemes 2/3 when the newest curve date has outrun the latest SOFR
+  observation by more than `--short-rate-staleness-days` (default 5).
+- `scripts/update_treasury_cmt.py` - added `--start-year`/`--end-year`/`--full` flags for
+  scriptable, non-interactive runs; the old `input()`-driven menu still runs for a human at
+  a terminal, but now falls back to a quick current-year update on `EOFError` instead of
+  crashing under cron/Task Scheduler.
+- `scripts/update_treasury_cmt.py`, `scripts/run_bootstrap.py`, `scripts/build_initial_treasury_file.py` -
+  replaced `✓`/`✗` console output with `[OK]`/`[FAILED]` (matching `update_short_rates.py`'s
+  existing convention) — the Unicode glyphs raised `UnicodeEncodeError` on Windows
+  consoles/Task Scheduler using a non-UTF-8 codepage. In `build_initial_treasury_file.py`
+  specifically this wasn't just cosmetic: the crash happened *inside* the per-year API-fetch
+  success path, got swallowed by a broader exception handler, and silently fell back to
+  CSV-only data (i.e. no current-year rates at all) — verified by rebuilding a 2023-to-today
+  workbook, which only picked up 2024-2026 data once this was fixed.
+
+**Docs:** `docs/BOOTSTRAP_GUIDE.md` (Workflow 2, §8 API reference), `docs/USER_GUIDE.md`,
+and `README.md` updated to describe `update_all_data.py` as the recommended daily/cron entrypoint.
+
+### ⚠️ Breaking Changes
+
+None. `update_treasury_cmt.py` run with no arguments at an interactive terminal behaves
+exactly as before.
+
+---
+---
+
 # Release Notes - v1.2.0
 
 ## Volatility Analysis

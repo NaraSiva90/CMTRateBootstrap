@@ -19,6 +19,15 @@ If `short_rate_combined.csv` is missing, the bootstrap falls back to:
 - `data/short_rates/fed_funds_1954_2018.csv`
 - `data/short_rates/sofr_2018_present.csv` (optional)
 
+**Keeping it current:** Schemes 2/3 anchor to `r0` from this file (§3.2/§3.3 of
+[BOOTSTRAP_GUIDE.md](BOOTSTRAP_GUIDE.md)); Scheme 1 doesn't use `r0` at all. Fed Funds
+(1954–2018) never needs re-fetching — it's a closed historical range — but SOFR
+(2018–present) does, so `scripts/update_short_rates.py` needs to run alongside
+`scripts/update_treasury_cmt.py`, not instead of it. `scripts/update_all_data.py` runs
+both plus the bootstrap in one command. If the combined file goes stale anyway,
+`cmt_bootstrap.py` prints a `WARNING` rather than failing silently (see
+`--short-rate-staleness-days` in [BOOTSTRAP_GUIDE.md §8](BOOTSTRAP_GUIDE.md#8-api-reference)).
+
 ## Run bootstrap
 
 ```bash

@@ -114,10 +114,10 @@ def fetch_treasury_api_data(start_year, end_year):
                 if 'date' in row_data:
                     all_data.append(row_data)
             
-            print(f"✓ ({len(entries)} records)")
-            
+            print(f"[OK] ({len(entries)} records)")
+
         except Exception as e:
-            print(f"✗ Error: {e}")
+            print(f"[FAILED] Error: {e}")
     
     if all_data:
         df = pd.DataFrame(all_data)
@@ -226,7 +226,7 @@ def create_excel_file(csv_df, api_df, output_file):
     # Save
     print("  Saving workbook...")
     wb.save(output_file)
-    print(f"✓ Saved to {output_file}")
+    print(f"[OK] Saved to {output_file}")
     
     return True
 
@@ -322,7 +322,7 @@ Examples:
     
     print()
     print("="*70)
-    print("✓ SUCCESS!")
+    print("[OK] SUCCESS!")
     print("="*70)
     print(f"Created: {output_file}")
     print()

@@ -44,10 +44,16 @@ Outputs:
 
 ### 5. Update Data (Ongoing)
 ```bash
-python scripts/update_treasury_cmt.py
+python scripts/update_all_data.py --scheme 2
 ```
 
-Updates `Treasury_CMT_Data_Tool.xlsx` with latest rates from Treasury API.
+Refreshes Treasury CMT par rates *and* the SOFR/Fed-Funds short-rate history
+(`data/short_rates/short_rate_combined.csv`), then re-runs the bootstrap. The short-rate
+refresh matters for Schemes 2/3, which anchor to it — Scheme 1 doesn't use it. Running
+`update_treasury_cmt.py` alone updates the workbook but leaves the short-rate anchor stale
+for S2/S3; `cmt_bootstrap.py` will print a `WARNING` if that anchor falls more than 5 days
+behind the newest curve date. See [Workflow 2 in the Bootstrap Guide](docs/BOOTSTRAP_GUIDE.md#workflow-2-production-automated-daily)
+for scheduling this as a daily cron/Task Scheduler job.
 
 ## 📊 Interactive Visualization
 
@@ -146,6 +152,7 @@ cmt-yield-curve-bootstrap/
 │   ├── run_bootstrap.py              # Wrapper to run bootstrap on Excel file
 │   ├── update_short_rates.py         # Combine SOFR/Fed Funds histories
 │   ├── update_treasury_cmt.py        # Fetch latest CMT rates from Treasury API
+│   ├── update_all_data.py            # Daily entrypoint: chains the two updaters above + bootstrap
 │   ├── build_initial_treasury_file.py # One-time: build complete historical dataset
 │   ├── yield_curve_app.py            # Streamlit: curve visualization
 │   └── vol_analysis_app.py           # Streamlit: PCA + tail-risk / ALCO scenarios
@@ -259,8 +266,8 @@ Human-readable tables:
 - Recent: XML API (2024-present)
 
 **Short Rates (r₀ anchor):**
-- SOFR: 2018-present (preferred)
-- Effective Fed Funds: 1954-2018 (fallback)
+- SOFR: 2018-present (preferred), fetched from the NY Fed markets API by `scripts/update_short_rates.py`
+- Effective Fed Funds: 1954-2018 (fallback, static — included in `data/short_rates/`, no refresh needed)
 
 ## Notes
 

@@ -11,6 +11,7 @@ Requirements:
     pip install openpyxl requests
 """
 
+import argparse
 import openpyxl
 import requests
 import xml.etree.ElementTree as ET
@@ -136,9 +137,9 @@ def update_excel_file(filename, start_year, end_year):
         if xml_data:
             parsed_data = parse_xml_data(xml_data)
             all_data.extend(parsed_data)
-            print(f"✓ ({len(parsed_data)} records)")
+            print(f"[OK] ({len(parsed_data)} records)")
         else:
-            print("✗ Failed")
+            print("[FAILED]")
     
     # Sort by date (newest first)
     all_data.sort(key=lambda x: x['date'], reverse=True)
@@ -182,7 +183,7 @@ def update_excel_file(filename, start_year, end_year):
     # Save
     try:
         wb.save(filename)
-        print(f"✓ Successfully updated {filename}")
+        print(f"[OK] Successfully updated {filename}")
         print(f"  Total records: {len(all_data)}")
         print(f"  Date range: {all_data[-1]['date']} to {all_data[0]['date']}")
         return True
@@ -192,43 +193,63 @@ def update_excel_file(filename, start_year, end_year):
 
 def main():
     """Main function"""
-    filename = 'Treasury_CMT_Data_Tool.xlsx'
-    
-    # Default: Update current year only
+    parser = argparse.ArgumentParser(description='Treasury CMT Rate Updater')
+    parser.add_argument('--start-year', type=int,
+                       help='Start year (default: current year, or 1990 with --full)')
+    parser.add_argument('--end-year', type=int, help='End year (default: current year)')
+    parser.add_argument('--full', action='store_true',
+                       help='Full historical update (1990 to present)')
+    parser.add_argument('--workbook', default='Treasury_CMT_Data_Tool.xlsx',
+                       help='Path to Treasury data Excel file')
+    args = parser.parse_args()
+
+    filename = args.workbook
     current_year = datetime.now().year
-    
-    print("=" * 60)
-    print("Treasury CMT Rate Updater")
-    print("=" * 60)
-    print()
-    print("Options:")
-    print("  1. Quick update (current year only)")
-    print("  2. Full historical update (1990 to present)")
-    print("  3. Custom year range")
-    print()
-    
-    choice = input("Enter choice (1-3) or press Enter for Quick update: ").strip()
-    
-    if choice == '2':
-        start_year = 1990
-        end_year = current_year
-    elif choice == '3':
-        try:
-            start_year = int(input("Enter start year (1990-present): "))
-            end_year = int(input("Enter end year (1990-present): "))
-        except ValueError:
-            print("Invalid input. Using current year.")
-            start_year = end_year = current_year
+
+    if args.start_year or args.end_year or args.full:
+        # Explicit flags: scriptable, no prompts (this is how automation/cron should call it).
+        start_year = args.start_year or (1990 if args.full else current_year)
+        end_year = args.end_year or current_year
     else:
-        start_year = end_year = current_year
-    
+        # No flags given: try the interactive menu, but fall back to quick update
+        # on EOF rather than crash -- stdin.isatty() isn't reliable enough across
+        # cron/Task Scheduler/shell environments to gate this any other way.
+        try:
+            print("=" * 60)
+            print("Treasury CMT Rate Updater")
+            print("=" * 60)
+            print()
+            print("Options:")
+            print("  1. Quick update (current year only)")
+            print("  2. Full historical update (1990 to present)")
+            print("  3. Custom year range")
+            print()
+
+            choice = input("Enter choice (1-3) or press Enter for Quick update: ").strip()
+
+            if choice == '2':
+                start_year = 1990
+                end_year = current_year
+            elif choice == '3':
+                try:
+                    start_year = int(input("Enter start year (1990-present): "))
+                    end_year = int(input("Enter end year (1990-present): "))
+                except ValueError:
+                    print("Invalid input. Using current year.")
+                    start_year = end_year = current_year
+            else:
+                start_year = end_year = current_year
+        except EOFError:
+            print("No input available; defaulting to quick update (current year only).")
+            start_year = end_year = current_year
+
     print()
     success = update_excel_file(filename, start_year, end_year)
     
     if success:
-        print("\n✓ Update completed successfully!")
+        print("\n[OK] Update completed successfully!")
     else:
-        print("\n✗ Update failed!")
+        print("\n[FAILED] Update failed!")
         sys.exit(1)
 
 if __name__ == '__main__':

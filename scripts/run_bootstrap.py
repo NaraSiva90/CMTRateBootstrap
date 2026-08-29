@@ -77,12 +77,12 @@ Examples:
     if result.returncode == 0:
         print()
         print("="*70)
-        print("✓ Bootstrap completed successfully!")
+        print("[OK] Bootstrap completed successfully!")
         print("="*70)
     else:
         print()
         print("="*70)
-        print("✗ Bootstrap failed!")
+        print("[FAILED] Bootstrap failed!")
         print("="*70)
         sys.exit(1)
 
