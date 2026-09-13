@@ -25,7 +25,7 @@ def fetch_treasury_data(year):
         'data': 'daily_treasury_yield_curve',
         'field_tdr_date_value': year
     }
-    
+
     try:
         response = requests.get(url, params=params, timeout=30)
         response.raise_for_status()
@@ -41,24 +41,24 @@ def parse_xml_data(xml_text):
         'm': 'http://schemas.microsoft.com/ado/2007/08/dataservices/metadata',
         'atom': 'http://www.w3.org/2005/Atom'
     }
-    
+
     root = ET.fromstring(xml_text)
     entries = root.findall('.//atom:entry', namespace)
-    
+
     data_rows = []
-    
+
     for entry in entries:
         content = entry.find('.//m:properties', namespace)
         if content is None:
             continue
-        
+
         row_data = {}
-        
+
         # Extract date
         date_elem = content.find('.//d:NEW_DATE', namespace)
         if date_elem is not None and date_elem.text:
             row_data['date'] = date_elem.text[:10]  # YYYY-MM-DD format
-        
+
         # Extract all maturities
         maturities = {
             'BC_1MONTH': '1Mo',
@@ -76,11 +76,11 @@ def parse_xml_data(xml_text):
             'BC_20YEAR': '20Yr',
             'BC_30YEAR': '30Yr'
         }
-        
+
         # Special handling for 1.5 month - try multiple variations
-        variations_1_5mo = ['BC_1.5MONTH', 'BC_1_5MONTH', 'BC_1POINT5MONTH', 
+        variations_1_5mo = ['BC_1.5MONTH', 'BC_1_5MONTH', 'BC_1POINT5MONTH',
                            'BC_ONEPOINTFIVEMONTH', 'BC_6WEEK']
-        
+
         for xml_name, display_name in maturities.items():
             elem = content.find(f'.//d:{xml_name}', namespace)
             if elem is not None and elem.text:
@@ -90,7 +90,7 @@ def parse_xml_data(xml_text):
                     row_data[display_name] = None
             else:
                 row_data[display_name] = None
-        
+
         # Try to find 1.5 month field with various names
         for var_name in variations_1_5mo:
             elem = content.find(f'.//d:{var_name}', namespace)
@@ -100,15 +100,15 @@ def parse_xml_data(xml_text):
                     break  # Found it, stop trying
                 except (ValueError, TypeError):
                     pass
-        
+
         if 'date' in row_data:
             data_rows.append(row_data)
-    
+
     return data_rows
 
 def update_excel_file(filename, start_year, end_year):
     """Update Excel file with Treasury CMT data"""
-    
+
     try:
         wb = openpyxl.load_workbook(filename)
         ws = wb['CMT Rates']
@@ -116,70 +116,70 @@ def update_excel_file(filename, start_year, end_year):
     except Exception as e:
         print(f"Error opening Excel file: {e}")
         return False
-    
+
     # Update config
     config_ws['B3'] = start_year
     config_ws['B4'] = end_year
-    
+
     # Clear existing data
     max_row = ws.max_row
     if max_row > 11:
         ws.delete_rows(12, max_row - 11)
-    
+
     # Fetch and write data
     all_data = []
     print(f"Fetching data from {start_year} to {end_year}...")
-    
+
     for year in range(start_year, end_year + 1):
         print(f"  Fetching {year}...", end=' ')
         xml_data = fetch_treasury_data(year)
-        
+
         if xml_data:
             parsed_data = parse_xml_data(xml_data)
             all_data.extend(parsed_data)
             print(f"[OK] ({len(parsed_data)} records)")
         else:
             print("[FAILED]")
-    
+
     # Sort by date (newest first)
     all_data.sort(key=lambda x: x['date'], reverse=True)
-    
+
     # Write to Excel
     print(f"\nWriting {len(all_data)} records to Excel...")
     current_row = 12
-    
-    maturities_order = ['1Mo', '1.5Mo', '2Mo', '3Mo', '4Mo', '6Mo', 
+
+    maturities_order = ['1Mo', '1.5Mo', '2Mo', '3Mo', '4Mo', '6Mo',
                         '1Yr', '2Yr', '3Yr', '5Yr', '7Yr', '10Yr', '20Yr', '30Yr']
-    
+
     for data in all_data:
         # Write date
         date_obj = datetime.strptime(data['date'], '%Y-%m-%d')
         ws.cell(current_row, 1, date_obj)
         ws.cell(current_row, 1).number_format = 'MM/DD/YYYY'
-        
+
         # Write rates (convert from API percent format to decimal)
         # Treasury API ALWAYS returns values as whole percentages
         # (e.g., 2.22 means 2.22%, not 0.0222)
-        # 
+        #
         # We convert to decimal (÷100) and store as NUMBER format
         # (NOT percentage format, which would multiply by 100 again!)
-        
+
         for col_idx, maturity in enumerate(maturities_order, start=2):
             value = data.get(maturity)
             if value is not None:
                 # Convert from percent (2.22) to decimal (0.0222)
                 decimal_value = value / 100.0
-                
+
                 ws.cell(current_row, col_idx, decimal_value)
                 # Format as decimal NUMBER (e.g., 0.0222), NOT percentage
                 ws.cell(current_row, col_idx).number_format = '0.0000'
-        
+
         current_row += 1
-    
+
     # Update last update timestamp
     ws['B6'] = datetime.now().strftime('%m/%d/%Y %I:%M:%S %p')
     ws['B6'].font = openpyxl.styles.Font(italic=True, color='00008000')  # Green
-    
+
     # Save
     try:
         wb.save(filename)
@@ -245,7 +245,7 @@ def main():
 
     print()
     success = update_excel_file(filename, start_year, end_year)
-    
+
     if success:
         print("\n[OK] Update completed successfully!")
     else:
