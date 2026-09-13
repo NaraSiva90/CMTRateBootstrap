@@ -68,7 +68,7 @@ def parse_tenor_to_years(label: str) -> float:
 def find_header_row(ws, required_first: str = "Date", max_scan_rows: int = 250) -> int:
     for r in range(1, max_scan_rows + 1):
         v = ws.cell(r, 1).value
-        if v is None: 
+        if v is None:
             continue
         if str(v).strip().lower() == required_first.lower():
             return r
@@ -259,11 +259,11 @@ def bootstrap_scheme1(S: np.ndarray, T: np.ndarray, nu: int, f_max: float = 1.0,
     cum_prev = 0.0
 
     for i in range(n):
-        if not used[i]: 
+        if not used[i]:
             continue
         Si, Ti = float(S[i]), float(T[i])
         dT = Ti - T_prev
-        if dT <= 0: 
+        if dT <= 0:
             raise ValueError("Non-increasing tenor grid encountered after skipping missing tenors.")
 
         def shat(fi: float) -> float:
@@ -274,7 +274,7 @@ def bootstrap_scheme1(S: np.ndarray, T: np.ndarray, nu: int, f_max: float = 1.0,
                 t = k / nu
                 inc += safe_exp(-fi * t)
             Ai = A_prev + (P_prev / nu) * inc
-            if Ai <= 0 or not math.isfinite(Ai): 
+            if Ai <= 0 or not math.isfinite(Ai):
                 return float("nan")
             return (1.0 - Pi) / Ai
 
@@ -318,7 +318,7 @@ def bootstrap_scheme1(S: np.ndarray, T: np.ndarray, nu: int, f_max: float = 1.0,
     seg_f = np.array(seg_f, float); cum_int = np.array(cum_int, float)
 
     def discount_fn(t: float) -> float:
-        if len(seg_ends) == 0: 
+        if len(seg_ends) == 0:
             return float("nan")
         t = float(t)
         j = int(np.searchsorted(seg_ends, t, side="left"))
@@ -358,11 +358,11 @@ def bootstrap_scheme2(S: np.ndarray, T: np.ndarray, r0: float, nu: int, a_max: f
     cum_prev = 0.0
 
     for i in range(n):
-        if not used[i]: 
+        if not used[i]:
             continue
         Si, Ti = float(S[i]), float(T[i])
         dT = Ti - T_prev
-        if dT <= 0: 
+        if dT <= 0:
             raise ValueError("Non-increasing tenor grid encountered after skipping missing tenors.")
         bi = f_prev_end
 
@@ -374,7 +374,7 @@ def bootstrap_scheme2(S: np.ndarray, T: np.ndarray, r0: float, nu: int, a_max: f
                 t = k / nu
                 inc += safe_exp(-int_lin(ai, bi, t))
             Ai = A_prev + (P_prev / nu) * inc
-            if Ai <= 0 or not math.isfinite(Ai): 
+            if Ai <= 0 or not math.isfinite(Ai):
                 return float("nan")
             return (1.0 - Pi) / Ai
 
@@ -423,7 +423,7 @@ def bootstrap_scheme2(S: np.ndarray, T: np.ndarray, r0: float, nu: int, a_max: f
     seg_a = np.array(seg_a, float); seg_b = np.array(seg_b, float); cum_int = np.array(cum_int, float)
 
     def discount_fn(t: float) -> float:
-        if len(seg_ends) == 0: 
+        if len(seg_ends) == 0:
             return float("nan")
         t = float(t)
         j = int(np.searchsorted(seg_ends, t, side="left"))
@@ -475,7 +475,7 @@ def bootstrap_scheme3(S: np.ndarray, T: np.ndarray, r0: float, nu: int, a_max: f
         # Handle NaN slopes from Bootstrap 2 failures
         l_j = l[j] if np.isfinite(l[j]) else 0.0
         l_j1 = l[j+1] if np.isfinite(l[j+1]) else 0.0
-        
+
         if l_j * l_j1 > 0:
             c_target[j+1] = (l_j*tau[j] + l_j1*tau[j+1])/(tau[j]+tau[j+1])
         else:
@@ -516,13 +516,13 @@ def bootstrap_scheme3(S: np.ndarray, T: np.ndarray, r0: float, nu: int, a_max: f
                 t = k / nu
                 inc += safe_exp(-int_cubic(aa, bb, c_i, d_i, t))
             Ai = A_prev + (P_prev/nu)*inc
-            if Ai <= 0 or not math.isfinite(Ai): 
+            if Ai <= 0 or not math.isfinite(Ai):
                 return float("nan")
             return (1.0 - Pi)/Ai - Si
 
         lo, hi = -a_max_scaled, a_max_scaled
         gL, gU = residual(lo), residual(hi)
-        
+
         # NUMERICAL SAFETY: If one side is NaN due to overflow, try asymmetric bracketing
         if not math.isfinite(gU) and math.isfinite(gL):
             # Positive side overflows, try smaller positive bound
@@ -531,15 +531,15 @@ def bootstrap_scheme3(S: np.ndarray, T: np.ndarray, r0: float, nu: int, a_max: f
                 if math.isfinite(gU_test):
                     hi, gU = hi_test, gU_test
                     break
-        
+
         if not math.isfinite(gL) and math.isfinite(gU):
-            # Negative side overflows, try smaller negative bound  
+            # Negative side overflows, try smaller negative bound
             for lo_test in [-a_max_scaled/10, -a_max_scaled/100, -10.0, -1.0, -0.1]:
                 gL_test = residual(lo_test)
                 if math.isfinite(gL_test):
                     lo, gL = lo_test, gL_test
                     break
-        
+
         if not (math.isfinite(gL) and math.isfinite(gU)) or gL*gU > 0:
             ok = False
             # CRITICAL FIX: Try NARROWER brackets first (especially for wide intervals), then wider
@@ -552,15 +552,15 @@ def bootstrap_scheme3(S: np.ndarray, T: np.ndarray, r0: float, nu: int, a_max: f
                     lo, hi = lo2, hi2
                     ok = True
                     break
-            
+
             # CHANGE 3: Fallback to piecewise constant forward if cubic fails
             if not ok:
                 warns.append(f"Scheme3: cubic failed at tenor {i} (T={Ti:g}, dT={dT:.3f}yr); using constant forward fallback")
-                
+
                 # Use constant forward (set a=b=c=0, solve for d)
                 # This is the safest fallback - maintains continuity
                 aa, bb, c_next_fallback = 0.0, 0.0, 0.0
-                
+
                 # Solve for constant forward d_i that matches the par rate
                 # Binary search on d_i
                 def residual_const(dd: float) -> float:
@@ -574,7 +574,7 @@ def bootstrap_scheme3(S: np.ndarray, T: np.ndarray, r0: float, nu: int, a_max: f
                     if Ai <= 0 or not math.isfinite(Ai):
                         return float("nan")
                     return (1.0 - Pi)/Ai - Si
-                
+
                 # Bracket search for constant forward
                 try:
                     dd = brentq(residual_const, -0.10, 0.20, xtol=tol, rtol=tol, maxiter=2000)
@@ -582,7 +582,7 @@ def bootstrap_scheme3(S: np.ndarray, T: np.ndarray, r0: float, nu: int, a_max: f
                     # If even constant forward fails, use previous forward
                     dd = d_i
                     warns.append(f"Scheme3: constant forward also failed at tenor {i}; using previous forward")
-                
+
                 # Compute discount factor with constant forward
                 Pi = P_prev * safe_exp(-dd * dT)
                 m_pay = pay_count(dT, nu)
@@ -591,17 +591,17 @@ def bootstrap_scheme3(S: np.ndarray, T: np.ndarray, r0: float, nu: int, a_max: f
                     t = k / nu
                     inc += safe_exp(-dd * t)
                 Ai = A_prev + (P_prev/nu)*inc
-                
+
                 d_next = dd  # Constant forward extends
-                
+
                 a3[i], b3[i], c3[i], d3[i] = aa, bb, c_next_fallback, dd
                 P[i], z[i], f_end[i] = Pi, -math.log(Pi)/Ti, d_next
-                
+
                 seg_starts.append(T_prev); seg_ends.append(Ti)
                 seg_A.append(aa); seg_B.append(bb); seg_C.append(c_next_fallback); seg_D.append(dd)
                 cum_prev += dd * dT  # Integral of constant forward
                 cum_int.append(cum_prev)
-                
+
                 P_prev, A_prev, T_prev = Pi, Ai, Ti
                 c_i, d_i = c_next_fallback, d_next
                 continue  # Skip Brent solver, move to next tenor
@@ -635,7 +635,7 @@ def bootstrap_scheme3(S: np.ndarray, T: np.ndarray, r0: float, nu: int, a_max: f
     cum_int = np.array(cum_int, float)
 
     def discount_fn(t: float) -> float:
-        if len(seg_ends) == 0: 
+        if len(seg_ends) == 0:
             return float("nan")
         t = float(t)
         j = int(np.searchsorted(seg_ends, t, side="left"))
@@ -817,7 +817,7 @@ def main():
                 disc_fn, warns = res.discount_fn, res.warns
 
             for k, Tk in enumerate(T):
-                if not np.isfinite(S[k]): 
+                if not np.isfinite(S[k]):
                     continue
                 Si_hat = par_rate(disc_fn, float(Tk), args.nu)
                 par_impl[i, k] = Si_hat

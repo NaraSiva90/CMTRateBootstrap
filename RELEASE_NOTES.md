@@ -46,6 +46,42 @@ None. `update_treasury_cmt.py` run with no arguments at an interactive terminal 
 exactly as before.
 
 ---
+
+## Bootstrap Bench
+
+---
+
+### 🎉 New: Standalone Web Tool for Scheme 3 What-If Bootstrapping
+
+A single-file, client-side tool for exploring Scheme 3 (monotone-cubic forward)
+bootstrapping interactively — no Python, no server, no build step. Par-rate sliders and
+a short-rate anchor (r0) redraw the implied instantaneous forward, spot, and discount
+curves out to 360 months live, with a round-trip fit check against the 14 input tenors.
+
+**New Files:**
+- `web/bootstrap-bench/index.html` - the tool itself; a JS port of `bootstrap_scheme2`/
+  `bootstrap_scheme3` from `src/cmt_bootstrap.py` (root-finding, discount/forward
+  evaluation), verified against the Python implementation to match to 10 decimal places
+- `web/bootstrap-bench/README.md` - what it is, how to run it, hosting notes (CodeSandbox
+  import, any static host)
+
+**Features:**
+- Paste-in importer for Treasury.gov's daily par yield curve table (the page itself can't
+  fetch Treasury.gov directly — Claude Artifact pages, and by extension this exported
+  copy, only reach a small CDN allowlist)
+- "Export 30Y forward curves" button producing an `.xlsx` workbook (via SheetJS) with
+  forward-implied par yield, spot rate, and discount factor grids — quarterly evaluation
+  dates from today to 30 years out, each against all 14 tenors, with instantaneous forward
+  held flat past the 30Y edge for maturities that run beyond it
+
+**Docs:** `README.md` - new "Bootstrap Bench (Standalone Web Tool)" section and Project
+Structure entry.
+
+### ⚠️ Breaking Changes
+
+None. This is a new, self-contained file; nothing existing was touched.
+
+---
 ---
 
 # Release Notes - v1.2.0
