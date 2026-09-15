@@ -62,8 +62,11 @@ curves out to 360 months live, with a round-trip fit check against the 14 input 
 - `web/bootstrap-bench/index.html` - the tool itself; a JS port of `bootstrap_scheme2`/
   `bootstrap_scheme3` from `src/cmt_bootstrap.py` (root-finding, discount/forward
   evaluation), verified against the Python implementation to match to 10 decimal places
-- `web/bootstrap-bench/README.md` - what it is, how to run it, hosting notes (CodeSandbox
-  import, any static host)
+- `web/bootstrap-bench/README.md` - what it is, how to run it, hosting notes (GitHub
+  Pages, CodeSandbox import, any static host)
+- `.github/workflows/deploy-pages.yml` - deploys `web/bootstrap-bench/` to GitHub Pages
+  on every push to `main` that touches it (requires the one-time repo setting: Settings →
+  Pages → Source → GitHub Actions)
 
 **Features:**
 - Paste-in importer for Treasury.gov's daily par yield curve table (the page itself can't
