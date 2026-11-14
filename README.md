@@ -137,12 +137,18 @@ This produces `Treasury_CMT_Data_Tool_curves_S1_<start>-<end>.npz` (see [Output 
 
 A single-file, client-side what-if tool for Scheme 3 bootstrapping — no Python, no server. Move par-rate sliders and a short-rate anchor (r0) and it redraws the implied instantaneous forward, spot, and discount curves out to 360 months live, with a round-trip fit check. Also includes a paste-in importer for Treasury.gov's daily par yield table, and an "Export 30Y forward curves" button that produces an `.xlsx` workbook of forward-implied par yield / spot / discount grids (quarterly, 0–30Y, with flat-forward extrapolation past 30Y).
 
+**Try it in your browser, no install:**
+- **Run it:** <https://narasiva90.github.io/CMTRateBootstrap/> (GitHub Pages; the link to open or share)
+- **See the code beside it:** <https://codesandbox.io/p/sandbox/github/NaraSiva90/CMTRateBootstrap/tree/main/web/bootstrap-bench> (CodeSandbox; read-only view of this repo, forkable)
+
+Both serve `web/bootstrap-bench/` from `main`, so they show the same version. Pages is redeployed by `.github/workflows/deploy-pages.yml` on every push to `main` that touches that folder.
+
 ```bash
-# Open directly in a browser -- no install, no build step
+# Or open the local copy directly -- no install, no build step
 open web/bootstrap-bench/index.html
 ```
 
-Also deployed to GitHub Pages via `.github/workflows/deploy-pages.yml` (auto-deploys on every push to `main` that touches this folder — see [`web/bootstrap-bench/README.md`](web/bootstrap-bench/README.md) for the one-time repo setting it needs, plus how to import it into CodeSandbox or another static host instead).
+See [`web/bootstrap-bench/README.md`](web/bootstrap-bench/README.md) for details.
 
 **Note:** the bootstrap math here is a JS port of `src/cmt_bootstrap.py`'s Scheme 2/3 logic (verified to match to 10 decimal places at the time of writing) — kept in this repo specifically so it stays visible next to the Python it mirrors. If `cmt_bootstrap.py`'s Scheme 2/3 math changes, re-verify this file against it.
 
