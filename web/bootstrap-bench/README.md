@@ -15,25 +15,37 @@ Scheme 2/3 logic, verified against the Python implementation to match to
 file should be re-verified against it (see the parent repo's history for
 the verification approach used when this was first ported).
 
-## Running it
+## Try it
 
-It's a single self-contained HTML file — no build step, no server, no
-dependencies beyond two public CDN scripts (Google Fonts, SheetJS for the
-Excel export). Open `index.html` directly in a browser, or:
+No install needed. Both links serve this folder from the `main` branch, so
+they show the same version.
 
-- **GitHub Pages (recommended for sharing a stable link):** this repo ships
-  a workflow (`.github/workflows/deploy-pages.yml`) that deploys this
-  folder to Pages on every push to `main` that touches it. One-time setup:
-  in the repo's **Settings → Pages**, set **Source** to **GitHub Actions**
-  — after that it deploys automatically. Once enabled, it's served at
-  `https://<owner>.github.io/<repo>/`.
-- **CodeSandbox:** use "Import from GitHub" and point it at this
-  repo/branch/path (`web/bootstrap-bench`) — CodeSandbox will serve
-  `index.html` directly. Better if you want visitors to fork/edit the code
-  in-browser rather than just run it; for just sharing the running tool,
-  prefer Pages above.
-- Any other static host (Netlify, a plain `python -m http.server`) works
-  the same way — it's dependency-free besides the two CDN scripts.
+- **Run it: <https://narasiva90.github.io/CMTRateBootstrap/>** (GitHub
+  Pages). Use this one to open or share the tool. It is the page on its own,
+  with no editor around it and no account needed.
+- **See the code beside it:
+  <https://codesandbox.io/p/sandbox/github/NaraSiva90/CMTRateBootstrap/tree/main/web/bootstrap-bench>**
+  (CodeSandbox). Use this one to read the source next to the running page,
+  or to fork a private copy to experiment with. It is a read-only view of
+  this repository; a fork is a snapshot and does not follow later changes
+  here.
+
+## Running it yourself
+
+It's a single self-contained HTML file with no build step and no server. Its
+only outside dependencies are two public CDN resources (Google Fonts, and
+SheetJS for the Excel export). Open `index.html` directly in a browser, or
+serve the folder from any static host (for example `python -m http.server`).
+
+## How the hosted copies stay current
+
+- **GitHub Pages:** `.github/workflows/deploy-pages.yml` redeploys this
+  folder on every push to `main` that touches it. This relies on the
+  repository setting **Settings → Pages → Source → GitHub Actions**. A fork
+  of this repository needs the same setting before its own deployment works.
+- **CodeSandbox:** the link above reads this folder from `main` each time it
+  is opened, so there is nothing to deploy. Edits can't be made through it;
+  changes go through this repository.
 
 ## Notes
 
