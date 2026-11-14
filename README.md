@@ -142,7 +142,7 @@ A single-file, client-side what-if tool for Scheme 3 bootstrapping — no Python
 open web/bootstrap-bench/index.html
 ```
 
-See [`web/bootstrap-bench/README.md`](web/bootstrap-bench/README.md) for details, including how to import it into CodeSandbox or another static host.
+Also deployed to GitHub Pages via `.github/workflows/deploy-pages.yml` (auto-deploys on every push to `main` that touches this folder — see [`web/bootstrap-bench/README.md`](web/bootstrap-bench/README.md) for the one-time repo setting it needs, plus how to import it into CodeSandbox or another static host instead).
 
 **Note:** the bootstrap math here is a JS port of `src/cmt_bootstrap.py`'s Scheme 2/3 logic (verified to match to 10 decimal places at the time of writing) — kept in this repo specifically so it stays visible next to the Python it mirrors. If `cmt_bootstrap.py`'s Scheme 2/3 math changes, re-verify this file against it.
 
@@ -157,6 +157,10 @@ cmt-yield-curve-bootstrap/
 ├── RELEASE_NOTES.md                   # Per-release changelog
 ├── INSTALLATION_GUIDE.md              # Setup + troubleshooting
 ├── .gitignore
+│
+├── .github/
+│   └── workflows/
+│       └── deploy-pages.yml           # Auto-deploys web/bootstrap-bench/ to GitHub Pages
 │
 ├── src/
 │   ├── cmt_bootstrap.py               # Core bootstrap algorithms

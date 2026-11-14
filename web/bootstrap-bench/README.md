@@ -21,11 +21,19 @@ It's a single self-contained HTML file — no build step, no server, no
 dependencies beyond two public CDN scripts (Google Fonts, SheetJS for the
 Excel export). Open `index.html` directly in a browser, or:
 
+- **GitHub Pages (recommended for sharing a stable link):** this repo ships
+  a workflow (`.github/workflows/deploy-pages.yml`) that deploys this
+  folder to Pages on every push to `main` that touches it. One-time setup:
+  in the repo's **Settings → Pages**, set **Source** to **GitHub Actions**
+  — after that it deploys automatically. Once enabled, it's served at
+  `https://<owner>.github.io/<repo>/`.
 - **CodeSandbox:** use "Import from GitHub" and point it at this
   repo/branch/path (`web/bootstrap-bench`) — CodeSandbox will serve
-  `index.html` directly.
-- Any static host (GitHub Pages, Netlify, a plain `python -m http.server`)
-  works the same way.
+  `index.html` directly. Better if you want visitors to fork/edit the code
+  in-browser rather than just run it; for just sharing the running tool,
+  prefer Pages above.
+- Any other static host (Netlify, a plain `python -m http.server`) works
+  the same way — it's dependency-free besides the two CDN scripts.
 
 ## Notes
 

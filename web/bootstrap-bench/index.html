@@ -148,7 +148,7 @@
     border-bottom:1px solid var(--grid); margin-bottom:2px;
   }
 
-  .rate-row{ display:grid; grid-template-columns:34px 1fr 56px; align-items:center; gap:8px; }
+  .rate-row{ display:grid; grid-template-columns:34px 1fr 64px; align-items:center; gap:8px; }
   .rate-row label{ font-size:.76rem; color:var(--text-secondary); }
   .rate-row input[type="range"]{
     width:100%; accent-color:var(--accent); height:20px; background:transparent; cursor:pointer;
@@ -226,7 +226,7 @@
           <span>r₀ — short-rate anchor</span>
           <small>SOFR / EFFR</small>
         </div>
-        <div class="rate-row" style="grid-template-columns:1fr 56px;">
+        <div class="rate-row" style="grid-template-columns:1fr 64px;">
           <input type="range" id="r0-range" min="-2" max="10" step="0.01" value="5.28">
           <div class="val-wrap">
             <input type="number" id="r0-num" class="mono" min="-2" max="10" step="0.01" value="5.28">
@@ -535,17 +535,22 @@
 
   function bindPair(rangeId, numId, key){
     var r = document.getElementById(rangeId), nInput = document.getElementById(numId);
-    function set(v){
+    // Rewriting the box on every keystroke would turn a half-typed "4." into "4.00", so the
+    // two-decimal format is applied when the value comes from elsewhere, and on blur.
+    function set(v, typing){
       v = Math.max(-2, Math.min(10, v));
       state[key] = v;
-      r.value = v; nInput.value = v;
+      r.value = v;
+      if(!typing) nInput.value = v.toFixed(2);
       scheduleRecompute();
     }
     r.addEventListener("input", function(){ set(parseFloat(r.value)); });
     nInput.addEventListener("input", function(){
       var v = parseFloat(nInput.value);
-      if(Number.isFinite(v)) set(v);
+      if(Number.isFinite(v)) set(v, true);
     });
+    nInput.addEventListener("change", function(){ nInput.value = state[key].toFixed(2); });
+    nInput.value = state[key].toFixed(2);
     return set;
   }
   var setters = {};
