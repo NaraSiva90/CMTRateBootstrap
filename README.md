@@ -135,7 +135,7 @@ This produces `Treasury_CMT_Data_Tool_curves_S1_<start>-<end>.npz` (see [Output 
 
 ## Bootstrap Bench (Standalone Web Tool)
 
-A single-file, client-side what-if tool for Scheme 3 bootstrapping — no Python, no server. Move par-rate sliders and a short-rate anchor (r0) and it redraws the implied instantaneous forward, spot, and discount curves out to 360 months live, with a round-trip fit check. Also includes a paste-in importer for Treasury.gov's daily par yield table, and an "Export 30Y forward curves" button that produces an `.xlsx` workbook of forward-implied par yield / spot / discount grids (quarterly, 0–30Y, with flat-forward extrapolation past 30Y).
+A single-file, client-side what-if tool for Scheme 3 bootstrapping — no Python, no server. Move par-rate sliders and a short-rate anchor (r0) and it redraws the implied instantaneous forward, spot, and discount curves out to 360 months live, with a round-trip fit check. Also includes a paste-in importer for Treasury.gov's daily par yield table; a **Shock scenario** tab that adds a shift (default +100 bp parallel, with optional per-tenor values) to the par rates and r0, bootstraps the shocked curve again, and overlays it on the base curve; and an "Export 30Y forward curves" button that produces an `.xlsx` workbook of forward-implied par yield / spot / discount grids for both the base and shocked curves (quarterly, 0–30Y, with flat-forward extrapolation past 30Y).
 
 **Try it in your browser, no install:**
 - **Run it:** <https://narasiva90.github.io/CMTRateBootstrap/> (GitHub Pages; the link to open or share)

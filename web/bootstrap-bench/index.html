@@ -182,9 +182,48 @@
   }
   .tooltip.show{ opacity:1; }
   .tooltip .t-row{ display:flex; justify-content:space-between; gap:14px; }
-  .tooltip .t-row .k{ display:flex; align-items:center; gap:.4em; opacity:.85; }
+  .tooltip .k{ display:flex; align-items:center; gap:.4em; opacity:.85; }
   .tooltip .t-dot{ width:7px; height:7px; border-radius:50%; }
   .tooltip .t-head{ font-weight:600; margin-bottom:2px; }
+  .tooltip table{ border-collapse:collapse; }
+  .tooltip th{ font-weight:500; opacity:.7; text-align:right; padding:0 0 2px 12px; }
+  .tooltip td{ padding:1px 0 1px 12px; text-align:right; }
+  .tooltip td:first-child, .tooltip th:first-child{ padding-left:0; text-align:left; }
+
+  [hidden]{ display:none !important; }
+
+  .tabs{ display:flex; gap:4px; border-bottom:1px solid var(--grid); }
+  .tab{
+    font:inherit; font-size:.84rem; font-weight:600; color:var(--text-secondary);
+    background:transparent; border:none; border-bottom:2px solid transparent;
+    padding:.55em .9em; margin-bottom:-1px; cursor:pointer;
+  }
+  .tab:hover{ color:var(--text-primary); }
+  .tab[aria-selected="true"]{ color:var(--text-primary); border-bottom-color:var(--accent); }
+  .tab:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+  .tab .tab-note{ font-weight:400; font-size:.76rem; color:var(--muted); margin-left:.45em; }
+
+  .val-wrap input.bp{ padding-right:22px; }
+  .shock-row{ grid-template-columns:30px 1fr 66px 42px 14px; gap:6px; }
+  .shock-row .sk-num{ font-size:.76rem; text-align:right; color:var(--text-secondary); }
+  .shock-row .sk-shocked{ color:var(--text-primary); font-weight:500; }
+  .shock-row.overridden input[type="number"]{ border-color:var(--accent); background:var(--surface-1); }
+  .shock-head{ font-size:.64rem; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; }
+  .shock-head span{ text-align:right; }
+  .shock-head span:first-child{ text-align:left; }
+  .sk-clear{
+    visibility:hidden; font:inherit; font-size:.85rem; line-height:1; color:var(--muted);
+    background:none; border:none; padding:0; cursor:pointer;
+  }
+  .shock-row.overridden .sk-clear{ visibility:visible; }
+  .sk-clear:hover{ color:var(--text-primary); }
+  .sk-clear:focus-visible{ outline:2px solid var(--accent); outline-offset:1px; }
+  .anchor-block .reset-btn{ align-self:flex-start; font-size:.74rem; padding:.4em .8em; }
+
+  .legend-bar{ display:flex; flex-wrap:wrap; gap:6px 18px; font-size:.74rem; color:var(--text-secondary); padding:0 2px; }
+  .legend-bar .lg{ display:inline-flex; align-items:center; gap:.5em; }
+  .legend-bar .lg-line{ width:22px; height:0; border-top:2px solid var(--text-secondary); }
+  .legend-bar .lg-line.dashed{ border-top-style:dashed; opacity:.6; }
 
   footer.note{ font-size:.72rem; color:var(--muted); line-height:1.6; }
   footer.note code{ font-family:"IBM Plex Mono", monospace; background:var(--surface-2); padding:.1em .35em; border-radius:4px; }
@@ -205,6 +244,11 @@
     </div>
     <div class="export-status" id="exportStatus"></div>
   </header>
+
+  <div class="tabs" role="tablist" aria-label="View">
+    <button class="tab" role="tab" id="tab-base" type="button" aria-selected="true" aria-controls="controls">Base curve</button>
+    <button class="tab" role="tab" id="tab-shock" type="button" aria-selected="false" aria-controls="shockControls">Shock scenario<span class="tab-note mono" id="tabShockNote">+100 bp</span></button>
+  </div>
 
   <div class="layout">
     <aside class="controls" id="controls">
@@ -250,7 +294,47 @@
       </fieldset>
     </aside>
 
+    <aside class="controls" id="shockControls" hidden>
+      <div class="anchor-block">
+        <div class="row-label">
+          <span>Parallel shift</span>
+          <small>applies to every row below</small>
+        </div>
+        <div class="rate-row" style="grid-template-columns:1fr 84px;">
+          <input type="range" id="shockParallelRange" min="-500" max="500" step="5" value="100" aria-label="Parallel shift in basis points">
+          <div class="val-wrap">
+            <input type="number" id="shockParallel" class="mono bp" min="-1000" max="1000" step="1" value="100" aria-label="Parallel shift in basis points">
+            <span class="pct">bp</span>
+          </div>
+        </div>
+        <p class="help">Added to each par rate on the Base curve tab and to r₀, then the curve is bootstrapped again, so forwards move by roughly, not exactly, the shift. Type in any row below to set that tenor's shock on its own.</p>
+        <button class="reset-btn" id="shockResetBtn" type="button">Reset to +100 bp parallel</button>
+      </div>
+
+      <div class="rate-row shock-row shock-head" aria-hidden="true"><span>Tenor</span><span>Base %</span><span>Shock</span><span>Shocked</span><span></span></div>
+      <fieldset class="tenor-group">
+        <legend>Short-rate anchor</legend>
+        <div id="shock-group-anchor"></div>
+      </fieldset>
+      <fieldset class="tenor-group">
+        <legend>Bills · 1M – 1Y</legend>
+        <div id="shock-group-bills"></div>
+      </fieldset>
+      <fieldset class="tenor-group">
+        <legend>Notes · 2Y – 10Y</legend>
+        <div id="shock-group-notes"></div>
+      </fieldset>
+      <fieldset class="tenor-group">
+        <legend>Bonds · 20Y – 30Y</legend>
+        <div id="shock-group-bonds"></div>
+      </fieldset>
+    </aside>
+
     <main class="charts" id="chartsWrap">
+      <div class="legend-bar" id="shockLegend" hidden>
+        <span class="lg"><span class="lg-line"></span><span id="shockLegendText">Shocked curve</span></span>
+        <span class="lg"><span class="lg-line dashed"></span>Base curve</span>
+      </div>
       <div class="panel">
         <div class="panel-head"><span class="swatch" style="background:var(--series-forward)"></span><h2>Instantaneous forward rate</h2><span class="unit">f(t), %</span></div>
         <canvas class="chart-canvas" id="cv-forward"></canvas>
@@ -562,6 +646,109 @@
     TENORS.forEach(function(tn){ setters[tn.key](tn.def); });
   });
 
+  // ---------- shock scenario ----------
+  // Each row's shock (bp) is added to that par rate (or to r0) and the shocked curve is
+  // bootstrapped again from those inputs. A row with its own value ignores the parallel shift.
+  var SHOCK_DEFAULT = 100;
+  var shock = { parallel: SHOCK_DEFAULT, over: {} };
+  var mode = "base";
+  var SHOCK_ROWS = [{ key:"r0", label:"r₀", group:"anchor" }].concat(
+    TENORS.map(function(tn){ return { key:tn.key, label:tn.label, group:tn.group }; }));
+
+  function isOverridden(key){ return Object.prototype.hasOwnProperty.call(shock.over, key); }
+  function shockBp(key){ return isOverridden(key) ? shock.over[key] : shock.parallel; }
+  function fmtBp(v){ return String(Math.round(v*100)/100); }
+  function fmtSignedBp(v){ return (v > 0 ? "+" : "") + v.toFixed(2) + " bp"; }
+  function shockedPct(key){ return state[key] + shockBp(key)/100; }
+
+  var shockEls = {};
+  SHOCK_ROWS.forEach(function(sr){
+    var row = document.createElement("div");
+    row.className = "rate-row shock-row";
+    row.innerHTML =
+      '<label for="s-'+sr.key+'">'+sr.label+'</label>' +
+      '<span class="sk-num mono" id="sb-'+sr.key+'"></span>' +
+      '<div class="val-wrap"><input type="number" id="s-'+sr.key+'" class="mono bp" min="-1000" max="1000" step="1"><span class="pct">bp</span></div>' +
+      '<span class="sk-num sk-shocked mono" id="ss-'+sr.key+'"></span>' +
+      '<button type="button" class="sk-clear" id="sx-'+sr.key+'" title="Use the parallel shift" aria-label="Use the parallel shift for '+sr.label+'">×</button>';
+    document.getElementById("shock-group-"+sr.group).appendChild(row);
+
+    var input = row.querySelector("input");
+    shockEls[sr.key] = { row:row, input:input, base:document.getElementById("sb-"+sr.key), shocked:document.getElementById("ss-"+sr.key) };
+    input.addEventListener("input", function(){
+      var v = parseFloat(input.value);
+      if(Number.isFinite(v)){ shock.over[sr.key] = Math.max(-1000, Math.min(1000, v)); scheduleRecompute(); }
+    });
+    input.addEventListener("change", function(){
+      if(!Number.isFinite(parseFloat(input.value))) delete shock.over[sr.key];
+      input.value = fmtBp(shockBp(sr.key));
+      scheduleRecompute();
+    });
+    row.querySelector(".sk-clear").addEventListener("click", function(){
+      delete shock.over[sr.key];
+      scheduleRecompute();
+    });
+  });
+
+  var parallelRange = document.getElementById("shockParallelRange");
+  var parallelNum = document.getElementById("shockParallel");
+  function setParallel(v, typing){
+    shock.parallel = Math.max(-1000, Math.min(1000, v));
+    parallelRange.value = shock.parallel;
+    if(!typing) parallelNum.value = fmtBp(shock.parallel);
+    scheduleRecompute();
+  }
+  parallelRange.addEventListener("input", function(){ setParallel(parseFloat(parallelRange.value)); });
+  parallelNum.addEventListener("input", function(){
+    var v = parseFloat(parallelNum.value);
+    if(Number.isFinite(v)) setParallel(v, true);
+  });
+  parallelNum.addEventListener("change", function(){ parallelNum.value = fmtBp(shock.parallel); });
+  document.getElementById("shockResetBtn").addEventListener("click", function(){
+    shock.over = {};
+    setParallel(SHOCK_DEFAULT);
+  });
+
+  function shockSummary(){
+    var n = Object.keys(shock.over).length;
+    return fmtSignedBp(shock.parallel).replace(".00 bp", " bp") + " parallel" +
+      (n ? ", " + n + (n === 1 ? " row" : " rows") + " set individually" : "");
+  }
+
+  function refreshShockPanel(){
+    SHOCK_ROWS.forEach(function(sr){
+      var els = shockEls[sr.key];
+      var own = isOverridden(sr.key);
+      els.base.textContent = state[sr.key].toFixed(2);
+      els.shocked.textContent = shockedPct(sr.key).toFixed(2);
+      els.row.classList.toggle("overridden", own);
+      if(document.activeElement !== els.input) els.input.value = fmtBp(shockBp(sr.key));
+    });
+    var n = Object.keys(shock.over).length;
+    document.getElementById("tabShockNote").textContent =
+      fmtSignedBp(shock.parallel).replace(".00 bp", " bp") + (n ? " · " + n + " edited" : "");
+    document.getElementById("shockLegendText").textContent = "Shocked curve (" + shockSummary() + ")";
+  }
+
+  function setMode(m){
+    mode = m;
+    document.getElementById("tab-base").setAttribute("aria-selected", String(m === "base"));
+    document.getElementById("tab-shock").setAttribute("aria-selected", String(m === "shock"));
+    document.getElementById("controls").hidden = (m !== "base");
+    document.getElementById("shockControls").hidden = (m !== "shock");
+    document.getElementById("shockLegend").hidden = (m !== "shock");
+    render(hoverIdx);
+  }
+  document.getElementById("tab-base").addEventListener("click", function(){ setMode("base"); });
+  document.getElementById("tab-shock").addEventListener("click", function(){ setMode("shock"); });
+  document.querySelector(".tabs").addEventListener("keydown", function(e){
+    if(e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    var next = (mode === "base") ? "shock" : "base";
+    setMode(next);
+    document.getElementById("tab-" + next).focus();
+    e.preventDefault();
+  });
+
   // ---------- paste-in import (Treasury.gov par yield table row) ----------
   // The page can't fetch home.treasury.gov itself (Artifact pages only reach a small script
   // CDN allowlist), so import works by parsing a row the user copies from Treasury's own
@@ -621,11 +808,8 @@
     return parts.join(" ");
   }
 
-  function computeForwardGrids(){
-    var S = TENORS.map(function(tn){ return state[tn.key]/100; });
-    var T = TENORS.map(function(tn){ return tn.t; });
-    var r0 = state.r0/100;
-    var segs = bootstrapScheme3(S, T, r0, NU);
+  function computeForwardGrids(inputs){
+    var segs = bootstrapScheme3(inputs.S, inputs.T, inputs.r0, NU);
     var f30 = forwardAt(30, segs);
     var P30 = discountAt(30, segs);
     function discExt(t){ return (t <= 30) ? discountAt(t, segs) : P30*Math.exp(-f30*(t-30)); }
@@ -671,12 +855,15 @@
       ["Annuity frequency (nu, payments/yr)", NU],
       ["Evaluation grid", "Quarterly, 0Y to 30Y (0.25Y steps, 121 rows)"],
       ["Extrapolation beyond 30Y", "Instantaneous forward held flat at f(30Y)"],
+      ["Shock", shockSummary()],
+      ["Shock method", "Each row's shock is added to its par rate (and to r0); the shocked curve is bootstrapped again from those inputs"],
       [],
-      ["r0 -- short-rate anchor (%)", state.r0],
-      [],
-      ["Tenor", "Input par rate (%)"]
+      ["Input", "Base (%)", "Shock (bp)", "Shocked (%)"]
     ];
-    TENORS.forEach(function(tn){ rows.push([tn.label, state[tn.key]]); });
+    SHOCK_ROWS.forEach(function(sr){
+      var label = sr.key === "r0" ? "r0 -- short-rate anchor" : sr.label;
+      rows.push([label, state[sr.key], shockBp(sr.key), Number(shockedPct(sr.key).toFixed(6))]);
+    });
     return XLSX.utils.aoa_to_sheet(rows);
   }
 
@@ -691,12 +878,16 @@
       return;
     }
 
-    var data = computeForwardGrids();
+    var data = computeForwardGrids(curveInputs(false));
+    var shocked = computeForwardGrids(curveInputs(true));
     var wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, buildInputsSheet(), "Inputs");
     XLSX.utils.book_append_sheet(wb, buildGridSheet(data.taus, data.parGrid, 4), "Par Yield fwd %");
     XLSX.utils.book_append_sheet(wb, buildGridSheet(data.taus, data.spotGrid, 4), "Spot Rate fwd %");
     XLSX.utils.book_append_sheet(wb, buildGridSheet(data.taus, data.dfGrid, 6), "Discount Factor fwd");
+    XLSX.utils.book_append_sheet(wb, buildGridSheet(shocked.taus, shocked.parGrid, 4), "Shocked Par Yield fwd %");
+    XLSX.utils.book_append_sheet(wb, buildGridSheet(shocked.taus, shocked.spotGrid, 4), "Shocked Spot Rate fwd %");
+    XLSX.utils.book_append_sheet(wb, buildGridSheet(shocked.taus, shocked.dfGrid, 6), "Shocked Discount Factor fwd");
 
     var wbout = XLSX.write(wb, { bookType: "xlsx", type: "array" });
     var blob = new Blob([wbout], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
@@ -756,14 +947,24 @@
   function fmtPct(v){ return v.toFixed(2)+"%"; }
   function fmtDF(v){ return v.toFixed(4); }
 
-  var currentData = null; // {months:[{t,f,z,p}], fitMax}
+  var currentData = null; // {base, shocked}, each {months:[{m,t,f,z,p}], fitMax}
   var lastGeom = {};
 
+  function curveInputs(shocked){
+    return {
+      S: TENORS.map(function(tn){ return (shocked ? shockedPct(tn.key) : state[tn.key])/100; }),
+      T: TENORS.map(function(tn){ return tn.t; }),
+      r0: (shocked ? shockedPct("r0") : state.r0)/100
+    };
+  }
+
   function computeAll(){
-    var S = TENORS.map(function(tn){ return state[tn.key]/100; });
-    var T = TENORS.map(function(tn){ return tn.t; });
-    var r0 = state.r0/100;
-    var segs = bootstrapScheme3(S, T, r0, NU);
+    return { base: computeCurve(curveInputs(false)), shocked: computeCurve(curveInputs(true)) };
+  }
+
+  function computeCurve(inputs){
+    var S = inputs.S, T = inputs.T;
+    var segs = bootstrapScheme3(S, T, inputs.r0, NU);
     var discFn = function(t){ return discountAt(t, segs); };
 
     var months = [];
@@ -785,7 +986,8 @@
     return { months: months, fitMax: fitMax };
   }
 
-  function drawChart(canvas, key, values){
+  // seriesList: drawn in order; a series with faint:true is the dashed base curve under a shock.
+  function drawChart(canvas, key, seriesList){
     var dpr = window.devicePixelRatio || 1;
     var rect = canvas.getBoundingClientRect();
     if(rect.width < 1) return null;
@@ -799,7 +1001,9 @@
 
     ctx.clearRect(0,0,W,H);
 
-    var ys = values.map(function(d){ return d.v; });
+    var ys = [];
+    seriesList.forEach(function(s){ s.values.forEach(function(d){ if(Number.isFinite(d.v)) ys.push(d.v); }); });
+    if(!ys.length) ys = [0];
     var yMin = Math.min.apply(null, ys), yMax = Math.max.apply(null, ys);
     if(yMin === yMax){ yMin -= 0.5; yMax += 0.5; }
     var pad = (yMax-yMin)*0.15;
@@ -836,14 +1040,19 @@
     ctx.strokeStyle = baseline;
     ctx.beginPath(); ctx.moveTo(padL,padT+plotH); ctx.lineTo(padL+plotW,padT+plotH); ctx.stroke();
 
-    // line
-    ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.lineJoin = "round";
-    ctx.beginPath();
-    values.forEach(function(d,i){
-      var x = xPix(d.t), y = yPix(d.v);
-      if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+    seriesList.forEach(function(s){
+      ctx.save();
+      ctx.strokeStyle = color; ctx.lineJoin = "round";
+      ctx.lineWidth = s.faint ? 1.5 : 2;
+      if(s.faint){ ctx.globalAlpha = 0.5; ctx.setLineDash([5,4]); }
+      ctx.beginPath();
+      s.values.forEach(function(d,i){
+        var x = xPix(d.t), y = yPix(d.v);
+        if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+      });
+      ctx.stroke();
+      ctx.restore();
     });
-    ctx.stroke();
 
     return { xPix:xPix, yPix:yPix, yMin:yMin, yMax:yMax, padL:padL, padT:padT, plotW:plotW, plotH:plotH, W:W, H:H };
   }
@@ -859,10 +1068,12 @@
     ctx.beginPath(); ctx.moveTo(x, geom.padT); ctx.lineTo(x, geom.padT+geom.plotH); ctx.stroke();
     ctx.restore();
   }
-  function drawDot(canvas, geom, tYears, v, color){
+  function drawDot(canvas, geom, tYears, v, color, faint){
+    if(!geom || !Number.isFinite(v)) return;
     var ctx = canvas.getContext("2d");
     var x = geom.xPix(tYears), y = geom.yPix(v);
     ctx.save();
+    if(faint) ctx.globalAlpha = 0.5;
     ctx.fillStyle = cssVar("--surface-1");
     ctx.strokeStyle = color;
     ctx.lineWidth = 2;
@@ -870,41 +1081,67 @@
     ctx.restore();
   }
 
+  var METRICS = [
+    { key:"forward",  field:"f", label:"forward",  colorVar:"--series-forward" },
+    { key:"spot",     field:"z", label:"spot",     colorVar:"--accent" },
+    { key:"discount", field:"p", label:"discount", colorVar:"--series-discount" }
+  ];
+  function seriesOf(curve, field){ return curve.months.map(function(d){ return { t:d.t, v:d[field] }; }); }
+  function fmtMetric(mt, v){ return mt.key === "discount" ? fmtDF(v) : fmtPct(v); }
+  function fmtChange(mt, delta){
+    if(mt.key === "discount") return (delta > 0 ? "+" : "") + delta.toFixed(4);
+    return fmtSignedBp(delta*100);
+  }
+
   function render(hoverMonthIdx){
     if(!currentData) return;
-    var months = currentData.months;
+    var shockView = (mode === "shock");
+    var cur = shockView ? currentData.shocked : currentData.base;
 
     var geoms = {};
-    geoms.forward  = drawChart(canvases.forward,  "forward",  months.map(function(d){ return {t:d.t, v:d.f}; }));
-    geoms.spot     = drawChart(canvases.spot,     "spot",     months.map(function(d){ return {t:d.t, v:d.z}; }));
-    geoms.discount = drawChart(canvases.discount, "discount", months.map(function(d){ return {t:d.t, v:d.p}; }));
+    METRICS.forEach(function(mt){
+      var list = [{ values: seriesOf(cur, mt.field) }];
+      if(shockView) list.unshift({ values: seriesOf(currentData.base, mt.field), faint:true });
+      geoms[mt.key] = drawChart(canvases[mt.key], mt.key, list);
+    });
     lastGeom = geoms;
 
-    var fitMax = currentData.fitMax;
+    var fitMax = cur.fitMax;
     var chip = document.getElementById("fitChip");
-    document.getElementById("fitChipText").textContent = "round-trip fit: max Δ " + fitMax.toFixed(2) + " bp";
-    chip.classList.toggle("warn", fitMax >= 1);
+    document.getElementById("fitChipText").textContent =
+      "round-trip fit" + (shockView ? " (shocked)" : "") + ": max Δ " + fitMax.toFixed(2) + " bp";
+    chip.classList.toggle("warn", !(fitMax < 1));
 
     if(hoverMonthIdx == null){
       tooltip.classList.remove("show");
+      tooltip.style.left = "0px";
       return;
     }
-    var d = months[hoverMonthIdx];
-    var cf = cssVar("--series-forward"), ca = cssVar("--accent"), cd = cssVar("--series-discount");
+    var d = cur.months[hoverMonthIdx], b = currentData.base.months[hoverMonthIdx];
 
-    drawCrosshair(canvases.forward, geoms.forward, d.t);
-    drawCrosshair(canvases.spot, geoms.spot, d.t);
-    drawCrosshair(canvases.discount, geoms.discount, d.t);
-    drawDot(canvases.forward, geoms.forward, d.t, d.f, cf);
-    drawDot(canvases.spot, geoms.spot, d.t, d.z, ca);
-    drawDot(canvases.discount, geoms.discount, d.t, d.p, cd);
+    METRICS.forEach(function(mt){
+      var c = cssVar(mt.colorVar);
+      drawCrosshair(canvases[mt.key], geoms[mt.key], d.t);
+      if(shockView) drawDot(canvases[mt.key], geoms[mt.key], b.t, b[mt.field], c, true);
+      drawDot(canvases[mt.key], geoms[mt.key], d.t, d[mt.field], c);
+    });
 
     var years = Math.floor((d.m-1)/12), monthsRem = (d.m-1)%12 + 1;
-    tooltip.innerHTML =
-      '<div class="t-head">Month '+d.m+' &middot; Year '+years+' Mo '+monthsRem+'</div>' +
-      '<div class="t-row"><span class="k"><span class="t-dot" style="background:'+cf+'"></span>forward</span><span class="mono">'+fmtPct(d.f)+'</span></div>' +
-      '<div class="t-row"><span class="k"><span class="t-dot" style="background:'+ca+'"></span>spot</span><span class="mono">'+fmtPct(d.z)+'</span></div>' +
-      '<div class="t-row"><span class="k"><span class="t-dot" style="background:'+cd+'"></span>discount</span><span class="mono">'+fmtDF(d.p)+'</span></div>';
+    var head = '<div class="t-head">Month '+d.m+' &middot; Year '+years+' Mo '+monthsRem+'</div>';
+    if(shockView){
+      var rows = METRICS.map(function(mt){
+        return '<tr><td><span class="k"><span class="t-dot" style="background:'+cssVar(mt.colorVar)+'"></span>'+mt.label+'</span></td>' +
+          '<td class="mono">'+fmtMetric(mt, b[mt.field])+'</td>' +
+          '<td class="mono">'+fmtMetric(mt, d[mt.field])+'</td>' +
+          '<td class="mono">'+fmtChange(mt, d[mt.field] - b[mt.field])+'</td></tr>';
+      }).join("");
+      tooltip.innerHTML = head + '<table><tr><th></th><th>base</th><th>shocked</th><th>change</th></tr>' + rows + '</table>';
+    } else {
+      tooltip.innerHTML = head + METRICS.map(function(mt){
+        return '<div class="t-row"><span class="k"><span class="t-dot" style="background:'+cssVar(mt.colorVar)+'"></span>'+mt.label+'</span>' +
+          '<span class="mono">'+fmtMetric(mt, d[mt.field])+'</span></div>';
+      }).join("");
+    }
     tooltip.classList.add("show");
 
     var wrapRect = chartsWrap.getBoundingClientRect();
@@ -923,17 +1160,17 @@
     requestAnimationFrame(function(){
       rafPending = false;
       currentData = computeAll();
+      refreshShockPanel();
       render(hoverIdx);
     });
   }
 
   var hoverIdx = null;
-  function handleMove(clientX, targetCanvas){
-    var rect = targetCanvas.getBoundingClientRect();
-    var padL = 40;
-    var plotW = rect.width - padL - 8;
-    var x = clientX - rect.left - padL;
-    var t = (x/plotW)*30;
+  function handleMove(clientX, key){
+    var g = lastGeom[key];
+    if(!g) return;
+    var rect = canvases[key].getBoundingClientRect();
+    var t = ((clientX - rect.left - g.padL)/g.plotW)*30;
     t = Math.max(1/12, Math.min(30, t));
     var idx = Math.round(t*12) - 1;
     idx = Math.max(0, Math.min(359, idx));
@@ -941,12 +1178,12 @@
     render(hoverIdx);
   }
   Object.keys(canvases).forEach(function(key){
-    canvases[key].addEventListener("mousemove", function(e){ handleMove(e.clientX, canvases[key]); });
+    canvases[key].addEventListener("mousemove", function(e){ handleMove(e.clientX, key); });
     canvases[key].addEventListener("mouseleave", function(){
       hoverIdx = null; render(null);
     });
     canvases[key].addEventListener("touchmove", function(e){
-      if(e.touches && e.touches[0]){ handleMove(e.touches[0].clientX, canvases[key]); e.preventDefault(); }
+      if(e.touches && e.touches[0]){ handleMove(e.touches[0].clientX, key); e.preventDefault(); }
     }, {passive:false});
     canvases[key].addEventListener("touchend", function(){ hoverIdx = null; render(null); });
   });
@@ -956,6 +1193,7 @@
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function(){ render(hoverIdx); });
 
   currentData = computeAll();
+  refreshShockPanel();
   render(null);
 })();
 </script>
