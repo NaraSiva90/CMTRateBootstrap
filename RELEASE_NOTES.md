@@ -76,6 +76,10 @@ curves out to 360 months live, with a round-trip fit check against the 14 input 
   forward-implied par yield, spot rate, and discount factor grids — quarterly evaluation
   dates from today to 30 years out, each against all 14 tenors, with instantaneous forward
   held flat past the 30Y edge for maturities that run beyond it
+- **Shock scenario** tab: a parallel shift (default +100 bp) with optional per-tenor
+  values is added to the par rates and r0, the shocked curve is bootstrapped again, and
+  it is drawn over the base curve in the same three charts. The export adds shocked par
+  yield, spot rate and discount factor sheets, and records the shock on the `Inputs` sheet
 
 **Docs:** `README.md` - new "Bootstrap Bench (Standalone Web Tool)" section and Project
 Structure entry.

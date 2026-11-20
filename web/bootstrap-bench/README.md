@@ -8,6 +8,25 @@ forward curves" button that builds an .xlsx workbook of forward-implied par
 yield / spot / discount grids (quarterly, 0-30Y), and a paste-in importer
 for Treasury.gov's daily par yield curve table.
 
+## Shock scenario tab
+
+The second tab overlays a shocked curve on the base curve from the first tab,
+in the same three charts (the base curve is drawn dashed). The hover readout
+gives base, shocked and change for each measure.
+
+- **How the shock is applied:** each row's shock in basis points is added to
+  that par rate, and to r0, and the shocked curve is then bootstrapped again
+  from those inputs. Par rates therefore move by exactly the shock; forward
+  and spot rates move by roughly, not exactly, that amount.
+- **Specifying it:** one parallel shift (default +100 bp) fills every row.
+  Typing in a row sets that tenor's shock on its own; it then ignores later
+  changes to the parallel shift until cleared with its × button. "Reset to
+  +100 bp parallel" clears every row.
+- **Export:** the workbook always includes the shocked curve as three more
+  sheets (`Shocked Par Yield fwd %`, `Shocked Spot Rate fwd %`,
+  `Shocked Discount Factor fwd`) in the same layout as the base sheets. The
+  `Inputs` sheet records the base, shock and shocked value for every row.
+
 The bootstrap math (`bootstrapScheme2`/`bootstrapScheme3`, root-finding,
 discount/forward evaluation) is a direct JS port of `src/cmt_bootstrap.py`'s
 Scheme 2/3 logic, verified against the Python implementation to match to
